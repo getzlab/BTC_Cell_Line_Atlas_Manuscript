@@ -1,0 +1,346 @@
+---
+title: "BTC Atlas - Figure 1"
+subtitle: "Data overview plots"
+author: "Amy Hung, Negin Karisani"
+date: "Last compiled on `r format(Sys.time(), '%d %B %Y')`"
+output: html_notebook
+---
+
+
+```{r}
+# rm(list = ls())
+set.seed(2023)
+library(devtools)
+library(tidyverse)
+library(data.table)
+library(ComplexHeatmap)
+library(openxlsx)
+library(ggplot2)
+library(reshape2)
+library(maftools)
+library(gridExtra)
+library(grid)
+library(DT)
+library(patchwork)
+library(circlize)
+library(RColorBrewer)
+library(magrittr)
+library(dplyr)
+library(viridis)
+library(ggplotify)
+library(egg)
+library(UpSetR)
+```
+
+```{r load data}
+
+working_directory <- "/Users/nkarisan/PycharmProjects/BTC_Cell_Line_Atlas_Manuscript"
+knitr::opts_knit$set(root.dir=working_directory)
+setwd(working_directory)
+
+input_directory <- 'input_data/'
+output_directory <- 'Figure1/output_fig1/'
+
+upset_file <- 'cell_lines_master_upset_2024-4-13.csv'
+upset_df <- read.csv(paste0(input_directory, upset_file), row.name = 'Cell_line')
+upset_df <- subset(upset_df, Subtype != "HCC")
+upset_df <- subset(upset_df, select = -c(Protein_replicates))
+upset_df$Subtype <- as.factor(upset_df$Subtype)
+upset_df <- upset_df[order(rownames(upset_df)), ]
+```
+
+
+```{r circ}
+
+
+BTC_upset_df <- subset(upset_df, select = -c(DepMap_ID))
+levels <- c('ICC', 'ECC', 'GBC', 'AC')
+subtypes_colors = c("#bf812d", "#35978f", "#9970ab", "#c9bb3a")
+labels <- 8:11
+
+BTC_upset_df$Type <- factor(BTC_upset_df$Subtype, levels = levels, labels = labels)
+# BTC_upset_df$Type <- as.integer(BTC_upset_df$Type)
+
+counts = c()
+start = 2
+for(tp in levels){
+  counts = c(counts, dim(BTC_upset_df[BTC_upset_df[, 'Subtype']==tp,])[1])
+  # df.3[df.3[,'Subtype']==tp,'Type'] <- as.character(start)
+  start <- start + 1
+}
+gaps = rep(10, length(counts)-1)
+gaps = append(gaps, c(45))
+grey_shades = c('white', '#c9c7c7', '#928e85','#c9c7c7', '#928e85','#c9c7c7', '#928e85','#c9c7c7')
+BTC_upset_df <- subset(BTC_upset_df, select = -c(Subtype))
+BTC_upset_df <- BTC_upset_df %>% mutate_all(funs(replace(., is.na(.), 0)))
+values <- c('CRISPR' = 1, 'Mutation' = 2, 'CNA' = 3, 'RNA' = 4, 'Fusion' = 5, 'Protein' = 6, 'PDX' = 7)
+row_names = row.names(BTC_upset_df)
+BTC_upset_df <- map2_df(BTC_upset_df, names(BTC_upset_df), ~ ifelse(.x==1, values[.y], .x))
+# BTC_upset_df <- as.data.frame(BTC_upset_df)
+
+BTC_upset_df$Type = BTC_upset_df$Type+6
+row.names(BTC_upset_df) = row_names
+rows = rownames(BTC_upset_df)
+BTC_upset_df <- sapply(BTC_upset_df, as.numeric)#[,1:7]
+BTC_upset_df = data.frame(BTC_upset_df)
+BTC_upset_df$Type = BTC_upset_df$Type +1
+rownames(BTC_upset_df) = rows
+BTC_upset_df <- BTC_upset_df %>% select(Type, CRISPR, Mutation, CNA, RNA, Fusion, Protein, PDX) %>% arrange(Type)
+col_fun1 = colorRamp2(c(0, 1, 2, 3, 4, 5,6,7,8,9,10,11), append(grey_shades, subtypes_colors))
+
+colnames(BTC_upset_df)[colnames(BTC_upset_df) == "Type"] <- "Subtype"
+## Plotting
+
+circos.clear()
+circos.par(start.degree = 45, gap.after = gaps)
+circos.heatmap(BTC_upset_df, col = col_fun1, track.height = 0.4,
+               rownames.side = "outside",
+               cell.border = "black",
+               split = factor(rep(levels, counts)))
+
+circos.track(track.index = get.current.track.index(), panel.fun = function(x, y) {
+  if(CELL_META$sector.numeric.index == 4) { # the last sector
+    cn = rev(colnames(BTC_upset_df))
+    n = length(cn)
+    circos.text(rep(CELL_META$cell.xlim[2], n) + convert_x(1, "mm"),
+                1:n - 0.5, cn,
+                cex = 0.5, adj = c(0, 0.5), facing = "inside")
+  }
+})
+
+circos.clear()
+lgd = Legend(title = "Subtype", at = levels,
+    legend_gp = gpar(fill = subtypes_colors))
+
+draw(lgd)
+
+# Save PDF
+pdf(file=paste0(output_directory, "circular_upset.pdf"), width = 5, height = 4)
+circos.clear()
+circos.par(start.degree = 45, gap.after = gaps)
+circos.heatmap(BTC_upset_df, col = col_fun1, track.height = 0.4,
+               rownames.side = "outside",
+               cell.border = "black",
+               split = factor(rep(levels, counts)))
+
+circos.track(track.index = get.current.track.index(), panel.fun = function(x, y) {
+  if(CELL_META$sector.numeric.index == 4) { # the last sector
+    cn = rev(colnames(BTC_upset_df))
+    n = length(cn)
+    circos.text(rep(CELL_META$cell.xlim[2], n) + convert_x(1, "mm"),
+                1:n - 0.5, cn,
+                cex = 0.5, adj = c(0, 0.5), facing = "inside")
+  }
+})
+
+circos.clear()
+lgd = Legend(title = "Subtype", at = levels,
+    legend_gp = gpar(fill = subtypes_colors), labels_gp =gpar(fontsize = 7), title_gp =gpar(fontsize = 9), size = unit(1, "mm"),title_gap = unit(1, "mm"),grid_height= unit(2, "mm"))
+
+draw(lgd)
+
+dev.off()
+```
+
+Oncoplot
+
+
+```{r heatmap,  fig.width=15, fig.height=9}
+## cell line key
+subtype <- upset_df[which(upset_df$Mutation==1),] %>% dplyr::select(Subtype)
+# subtype$ModelID = row.names(subtype)
+subtype$Subtype <- factor(subtype$Subtype, level = c("ICC", "ECC", "GBC", "AC"))
+subtype = subtype %>% arrange(Subtype)
+
+
+goi_file = 'Additional_Data/Selected_Lists/oncoplot/fig1_genes.csv'
+goi_tb = read.csv(paste0(input_directory, goi_file))
+
+mutation.1 <- read.csv(paste0(input_directory,'Additional_Data/Selected_Lists/oncoplot/fig1_data.csv'))
+mutation.1$HugoSymbol <- as.character(mutation.1$HugoSymbol)
+# goi = unique(mutation.1$HugoSymbol)
+mutation.2 <- mutation.1 %>% dplyr::select(HugoSymbol, VariantInfo, ModelID)
+
+## CNA calls
+CNV_tb <- read.csv(paste0(input_directory,"Main_Data/CN/CNV.csv"), row.names = 1)
+rownames(CNV_tb) <- sub("^(\\S+).*", "\\1", rownames(CNV_tb))
+CNV_tb <- CNV_tb[row.names(CNV_tb) %in% goi_tb$HugoSymbol, ] %>% t()
+CNV.2 <- CNV_tb[row.names(CNV_tb) %in% row.names(subtype), ]
+CNV.3 <- merge(CNV.2, subtype, by.x = 0, by.y = 0, all.x = T, all.y = F)
+CNV.4 <- CNV.3 %>% reshape2::melt(., id = c("Row.names", "Subtype")) %>%
+  mutate(CNA = ifelse(value > 2, "Gain",
+                                         ifelse(value < 0.5 & value >= 0.25, "Het_loss",
+                                                ifelse(value < 0.25, "Homo_loss", NA)))) %>%
+  drop_na(CNA) %>%
+  mutate(HugoSymbol = variable) %>%
+  mutate(ModelID = Row.names) %>%
+  dplyr::select(ModelID, HugoSymbol, CNA, Subtype) %>%
+  mutate(Assay = "CNA")
+
+cnv_design = dcast(CNV.4, ModelID ~ HugoSymbol)
+row.names(cnv_design) = cnv_design$ModelID
+cnv_design = cnv_design[, -1]
+count_cnv <- function(row) {
+  sum(row == "CNA", na.rm = TRUE)
+}
+cnv_counts <- apply(cnv_design, 2, count_cnv)
+
+
+mutation_design = dcast(mutation.2, ModelID ~ HugoSymbol)
+
+mutation_design <- melt(mutation_design, c("ModelID")) #%>% mutate(Assay = "Mutation")
+
+mutation.3 <- merge(mutation_design, subtype, by.x = "ModelID", by.y = 0, all.x = T, all.y = F) %>%
+  mutate(Assay = "Mutation")
+
+mutation.3$Subtype <- factor(mutation.3$Subtype, levels = c("ICC", "ECC", "GBC", "AC"))
+
+# gene.order <- mutation.3 %>%
+#   group_by(variable) %>%
+#   summarise(Frequency = sum(value)) %>% arrange(-Frequency)
+
+
+mutation_counts <- mutation.2 %>%
+  group_by(HugoSymbol) %>%
+  summarise(MutationCount = n_distinct(ModelID)) %>%
+  mutate(MutationCount = ifelse(HugoSymbol %in% c('MYC', 'AXIN1', 'APC'), MutationCount, MutationCount + 1))
+
+for (i in 1:length(mutation_counts$HugoSymbol)) {
+  if (mutation_counts$HugoSymbol[i] %in% names(cnv_counts)) {
+    mutation_counts$MutationCount[i] <- mutation_counts$MutationCount[i] + cnv_counts[[mutation_counts$HugoSymbol[i]]]
+  }
+}
+
+mutation_counts = merge(mutation_counts, goi_tb, by = 'HugoSymbol')
+mutation_counts <- mutation_counts %>%
+ arrange(-order)%>%
+        # arrange(MutationCount)%>%
+  mutate(HugoSymbol = factor(HugoSymbol, levels = HugoSymbol))
+
+
+
+# mutation_counts <- mutation_counts %>%
+#   arrange(MutationCount) %>%
+#   mutate(HugoSymbol = factor(HugoSymbol, levels = HugoSymbol))
+
+mutation.3 <- merge(mutation.3, mutation_counts, by.x = "variable", by.y = "HugoSymbol", all.x = TRUE)
+# mutation.3 <- mutation.3[order(mutation.3$MutationCount), ]
+# mutation.3$variable <- factor(mutation.3$variable, levels = unique(mutation.3$variable))
+mutation.3$variable <- factor(mutation.3$variable, levels = unique(mutation_counts$HugoSymbol))
+
+# mutation.3$ModelID <- factor(mutation.3$ModelID, levels = unique(mutation.3$ModelID[order(mutation.3$Subtype)]))
+
+
+
+mutation.3 <- mutation.3 %>% arrange(Subtype)
+
+mutation.3$ModelID <- factor(mutation.3$ModelID, levels = unique(mutation.3$ModelID))
+
+
+
+## Mutation colors
+# poolPalette <- colorRampPalette(brewer.pal(9, "Set3"))
+my_colors <- c("#8DD3C7", "#FFFFB3", "#FDB462", "#FB8072", "#80B1D3", "#BEBADA", "#B3DE69", "#FCCDE5", "#D9D9D9")
+
+a = ggplot(data = mutation.3, aes(x = Assay, y = ModelID, fill = Subtype)) +
+  geom_tile(color = "black") +
+  scale_fill_manual(name = "Subtype", values = c(ICC = '#bf812d', ECC= '#35978f', GBC='#9970ab', AC='#c9bb3a'))+
+  theme(panel.border = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        strip.background = element_blank(),
+        plot.title = element_text(color='white',size = 1),
+        axis.text.y=element_text(color="white", size=1),
+        axis.text.x=element_text(color="white", size=1),
+        axis.title.y=element_text(color="white", size=1),
+        axis.title.x = element_text(color="white", size=1),
+        legend.text = element_text(color="black", size=6),
+        legend.title = element_text(colour="black", size=6),
+        legend.key.size = unit(.3, "cm"),
+        plot.margin = unit(c(0,0,0,0), "cm"))+
+  coord_flip()
+
+b = ggplot() +
+  geom_tile(
+    data = mutation.3,
+    aes(x=variable, y=ModelID), fill="grey95", color = "black"
+  ) +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        strip.background = element_blank(),
+        plot.title = element_text(color='white',size = 1),
+        axis.text.y=element_text(color="black", size=7.5),
+        axis.text.x=element_text(angle = 90, color="black", size=6.5,  vjust = .4, hjust = 1.),#hjust = .2,
+        axis.title.y=element_text(color="white", size=1),
+        axis.title.x = element_text(color="white", size=1),
+        legend.text = element_text(color="black", size=6),
+        legend.title = element_text(color="black", size=6),
+                legend.key.size = unit(0.3, "cm"),
+        plot.margin = unit(c(0,0,0,0), "cm"))+
+  #new_scale_fill() +
+  geom_tile(
+    data = mutation.2,
+    aes(HugoSymbol, ModelID, fill=VariantInfo), color = "black"
+  ) +
+  scale_fill_manual(name = "Mutation", values = my_colors) +#poolPalette(9)
+  #new_scale_fill() +
+  geom_point(
+    data = CNV.4,
+    aes(HugoSymbol, ModelID, shape=CNA), color = "black"
+    #scale_shape_manual(name = "CNA")
+  )+
+  coord_flip()
+
+# Create a bar plot for mutation counts
+d = ggplot(mutation_counts, aes(x = HugoSymbol, y = MutationCount)) +
+  geom_bar(
+    stat = "identity",
+    fill = "#7c7d80"
+  ) +
+         scale_y_continuous(limits = c(0, 40), breaks = seq(0, 40, by = 5)) +
+  ylab("Alteration Count") +  # Move ylab to the correct position
+  geom_text(
+    aes(label = MutationCount-1),
+    vjust = .5,
+    hjust = -.5,
+    size = 2
+  ) +
+  theme_minimal() +
+  theme(
+    # axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    # axis.text.y = element_text(size = 8),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    text = element_text(size = 7.5),
+    plot.title = element_text(size = 7),
+    # axis.title.x = element_blank()
+    axis.title.y = element_blank(),
+    plot.margin = unit(c(0.1,.2, .1, .1), "cm")
+  ) +
+  coord_flip()
+
+final_plot <- ggarrange(
+  a + theme(legend.position = c(-.15, -9)), ggplot() + theme_void(),
+  b + theme(legend.position = "left"), d,#top, right, bottom, left.+theme(plot.margin = margin(.1, .1, .1, .1, "cm"))
+  # c, ggplot() + theme_void(),
+    # plot_layout(heights = unit(c(0.5, 5, 0.5), c('cm', 'null'))) +
+    # plot_layout(guides = 'collect'),
+  nrow = 2, heights = c(.25, 10),
+  ncol = 2, widths = c(10, 3)
+)
+ggsave(paste0(output_directory, "Figure1.pdf"), final_plot, width = 10, height = 5)
+```
+
+
+## Session info
+```{r session-info}
+
+sessionInfo()
+
+```

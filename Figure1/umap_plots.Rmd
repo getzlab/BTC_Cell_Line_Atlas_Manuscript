@@ -1,0 +1,678 @@
+---
+title: "UMAP Plots"
+subtitle: "comparison with patient samples and other DepMap GI"
+author: "Amy Hung, Negin Karisani"
+date: "Last compiled on `r format(Sys.time(), '%d %B %Y')`"
+output:
+  rmdformats::robobook:
+    thumbnails: true
+    lightbox: true
+    gallery: true
+    code_folding: show
+---
+
+
+## Load required libraries
+```{r libraries, message = FALSE, warning= FALSE, error=FALSE}
+library(tidyverse)
+library(ComplexHeatmap)
+library(openxlsx)
+library(ggplot2)
+library(reshape2)
+library(ggpubr)
+library(DESeq2)
+library("RColorBrewer")
+library(pheatmap)
+library(umap)
+library(limma)
+library(ggrepel)
+library(DT)
+library(plotly)
+# library(svpluscnv)#taRifx
+```
+
+```{r sample-overview}
+# rm(list = ls())
+seed = 321
+
+working_directory <-  "/Users/nkarisan/PycharmProjects/BTC_Cell_Line_Atlas_Manuscript"
+knitr::opts_knit$set(root.dir=working_directory)
+setwd(working_directory)
+
+input_directory <- 'input_data/'
+output_directory <- 'Figure1/output_fig1/'
+
+upset_file = 'cell_lines_master_upset_2024-4-13.csv'
+# upset_file = 'input_files/cell_lines_master_upset_2024-1-12.csv'
+key <- read.csv(paste0(input_directory, upset_file))
+key$Cell_line <- sub("-", "", key$Cell_line)
+key.2 <- key %>% select('DepMap_ID', 'Cell_line', 'Subtype')
+```
+
+```{r}
+load_csv_file <- function (filename, row_name="Gene"){
+  data_df <- fread(filename)
+  indices = data_df[, get(row_name)]
+  data_df = data_df[, -1] # drop the first column
+  data_df = as.data.frame(data_df)
+  row.names(data_df) = indices
+  names(data_df) <- gsub('-', '', names(data_df))
+  return(data_df)
+}
+```
+
+## CHOL cell lines vs PDX
+### Load Data
+Cell lines were made from PDX models. How well do these cell line recapitulate PDX molecular profiles?
+```{r pdx-1, warning=F, fig.width=8, fig.height=8}
+## read RNA-seq table
+## this is a log2(TPM+1) matrix
+library(data.table)
+key_pdx_cell_line_file = 'Main_Data/RNA/keys_pdx_cell-line.csv'
+pdx_cl_common_key = read.csv(paste0(input_directory, key_pdx_cell_line_file))
+pdx_cl_common_key$Cell.line <- sub("-", "", pdx_cl_common_key$Cell.line)
+
+rna_pdx_file = 'Main_Data/RNA/rna_pdx.csv'
+rna_pdx_tb = fread(paste0(input_directory, rna_pdx_file))
+rownames(rna_pdx_tb) = rna_pdx_tb$Gene
+rna_pdx_tb = subset(rna_pdx_tb, select = -Gene)
+
+rna_cl_file = 'Main_Data/RNA/rna_cell_lines.csv'
+# rna_cl_tb = read.csv(rna_cl_file, row.names = 'Gene')
+rna_cl_tb <- load_csv_file(paste0(input_directory, rna_cl_file), row_name = 'Gene')
+rna_cl_tb = rna_cl_tb[, names(rna_cl_tb) %in% pdx_cl_common_key$Cell.line]
+data_transcript_pdx_cl_common = cbind(rna_cl_tb, rna_pdx_tb)
+
+cutoff_expr <- log2(10)
+data_transcript_pdx_cl_common.10 <- data_transcript_pdx_cl_common %>%
+  mutate(sum = rowSums(.)) %>% 
+  filter(sum > cutoff_expr)
+data_transcript_pdx_cl_common.10$sum <- NULL
+```
+
+```{r pdx-2, warning=F, fig.width=5, fig.height=5}
+##
+pdx_cl_common_key.1 <- pdx_cl_common_key %>% mutate(Source = "cell line") %>%
+  mutate(Name = Cell.line) %>%
+  mutate(Pair = Cell.line)
+pdx_cl_common_key.2 <- pdx_cl_common_key %>% mutate(Source = "PDX tumor") %>%
+  mutate(Name = Name) %>%
+  mutate(Pair = Cell.line)
+pdx_cl_common_key.3 <- rbind(pdx_cl_common_key.1, pdx_cl_common_key.2) %>% distinct(Name, .keep_all = TRUE) # 44
+pdx_cl_common_key.3$Pair <- as.factor(pdx_cl_common_key.3$Pair)
+
+## Setup annotation file to show the conditions on the figures
+treat_ann <- pdx_cl_common_key.3 %>% select(Name, Subtype, Source, Pair)
+rownames(treat_ann) <- pdx_cl_common_key.3$Name
+treat_ann$Name <- NULL
+treat_ann
+
+```
+
+
+Make the TPM matrix a DESeq2 subject. Normally one wouldn't input TPM to DESeq2.  Here it is ok because we just use it for visualization purpose, not differential expression analysis. We use `limma` to remove source effect (PDX vs cell line).
+
+```{r pdx lines batch effect}
+set.seed(seed)
+
+cust.color  = list(#Pair = colorRampPalette( (brewer.pal(9, "Paired")) )(100),
+                  Source = c(`cell line`= "red", `PDX tumor`= "black"),
+                  Subtype = c(ICC = "#bf812d", ECC = "#35978f", GBC = "#9970ab"))
+## Format color
+cust.color  = list(#Pair = colorRampPalette( (brewer.pal(9, "Paired")) )(100),
+                  Source = c(`cell line`= "red", `PDX tumor`= "black"),
+                  Subtype = c(ICC = "#bf812d", ECC = "#35978f", GBC = "#9970ab"))
+
+## Clustering
+# convert log2 table back to TPM table
+data_transcript_pdx_cl_common_TPM <- data_transcript_pdx_cl_common.10^2
+
+
+# Verify that sample names and colnames are the same
+# make sure sample names are in the same order in sample and count table files
+all(pdx_cl_common_key.3$Name %in% colnames(data_transcript_pdx_cl_common_TPM))
+cts <- as.data.frame.matrix( data_transcript_pdx_cl_common_TPM[, pdx_cl_common_key.3$Name] )
+all(pdx_cl_common_key.3$Name == colnames(cts))
+
+
+# Create a DEseqDataSet from txi count table
+cts <- round(cts)
+dds <- DESeqDataSetFromMatrix(countData = cts,
+                              colData = pdx_cl_common_key.3,
+                              design = ~ 1)
+
+# Perform a vst transformation on count data
+rld <- vst(dds, blind=TRUE)
+
+# use limma tool to remove source effect (PDX vs cell line)
+bc <- assay(rld)
+bc <- limma::removeBatchEffect(bc, batch = rld$Source)
+assay(rld) <- bc
+```
+
+
+### UMAP
+Notes: PDX-cell line pairs look nicer in UMAP compared to PCA plot.
+```{r pdx-3, warning = F, fig.width=6, fig.height=6}
+## for data reproducible purpose
+set.seed(seed)
+
+## Normalized count table
+normalized_counts <- assay(rld) %>%
+  t() # We need to transpose this data so each row is a sample
+
+## run UMAP
+umap_results <- umap::umap(normalized_counts)
+
+
+umap_plot_df <- data.frame(umap_results$layout) %>%
+  tibble::rownames_to_column("Name") %>%
+  dplyr::inner_join(pdx_cl_common_key.3, by = "Name") 
+umap_plot_df
+
+d3_category20 <- c(
+  "#1f77b4", "#aec7e8",
+  "#ff7f0e", "#ffbb78",
+  "#2ca02c", "#98df8a",
+  "#d62728", "#ff9896",
+  "#9467bd", "#c5b0d5",
+  "#8c564b", "#c49c94",
+  "#e377c2", "#f7b6d2",
+  "#7f7f7f", "#c7c7c7",
+  "#bcbd22", "#dbdb8d",
+  "#17becf", "#9edae5"
+)
+
+
+ggplot(umap_plot_df, aes(x = X1, y = X2)) +
+  geom_point(size = 3, alpha = 0.8, aes(color = Cell.line, shape = Source)) +
+  ggtitle("Paired Cell line - PDX") +
+  scale_color_manual(values = d3_category20) +
+  #geom_text_repel(aes(label=key), size = 3) +   # This puts sample names in, delete to get rid of those
+  #scale_colour_manual(values = c(`cell line`= "#1B9E77", `PDX tumor`= "#E6AB02")) +
+  xlab("UMAP1") +
+  ylab("UMAP2") +
+  theme_bw() +
+  theme(text = element_text(size = 10),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0),
+        legend.position = 'right',
+        legend.text.align = 0,
+        legend.key.size = unit(0.3, 'cm'),
+        legend.spacing = unit(0.3, 'cm'), 
+        panel.background = element_rect(colour = "black", fill = "white"),
+        axis.text.y=element_text(color="black", size=10),
+        axis.text.x=element_text(color="black", size=10))
+
+ggsave(paste0(output_directory, 'RNAseq_UMAP_PDX-cell.pdf'), units = 'in', width = 6, height = 3.7)
+```
+
+
+## CHOL cell lines vs other GI cancers
+GI cancers: pancreatic, gastric, colon, liver, gastric.
+Since our CHOL TPM matrix is 20Q2, the TPM matrix of the other GI cancer was obtained from [DepMap Public 20Q2 Primary Files](https://depmap.org/portal/download/all/). \break
+
+```{r intermediate gi}
+rna_file = 'Main_Data/RNA/rna_cell_lines.csv'
+# data_transcript = read.csv(rna_file, row.names = 'Gene')
+data_transcript <- load_csv_file(paste0(input_directory, rna_cl_file), row_name = 'Gene')
+## CHOL cell line key
+icc_key <- key %>% filter(RNA == "1" & Subtype != 'HCC') #56
+
+## Read RNA-seq matrix - CHOL cell lines
+data_transcript_cl <- data_transcript[, which(colnames(data_transcript) %in% icc_key$Cell_line)]
+# row.names(data_transcript_pdx_cl_common) = data_transcript$Gene
+data_transcript_cl <- data_transcript_cl[, order(match(names(data_transcript_cl), icc_key$Cell_line))]
+
+
+## other GI cancer key
+depmap_sample_info_file = 'Additional_Data/DepMap/RNA_20Q2/public-20q2_v18-sample-info.csv'
+other_annot <- read.csv(paste0(input_directory, depmap_sample_info_file))
+other_annot <- other_annot %>% filter(!(DepMap_ID %in% icc_key$DepMap_ID))
+other_annot <- other_annot %>% filter(lineage == "pancreas" | lineage == "colorectal" | lineage =="gastric" |
+                                        lineage == "liver" | lineage == "esophagus")#256
+## Read RNA-seq matrix - other GI cancer lines
+depmap_rna_file = 'Additional_Data/DepMap/RNA_20Q2/public-20q2_v18-ccle-expression.csv'
+data_transcript_all <- read.csv(paste0(input_directory, depmap_rna_file), row.names = 1)
+data_transcript_all <- data_transcript_all[!(rownames(data_transcript_all) %in% icc_key$DepMap_ID), ]
+data_transcript_all <- data_transcript_all %>% filter(rownames(data_transcript_all) %in% other_annot$DepMap_ID)
+name <- as.vector(colnames(data_transcript_all))
+new.name <- str_extract(colnames(data_transcript_all), "[^..]+")
+colnames(data_transcript_all) = new.name
+```
+
+### UMAP calculation
+```{r gi-1, fig.width=8, fig.height=8}
+set.seed(seed)
+
+## numbers of genes are different in these two RNA-seq matrix! I took genes that shared between the two matrix.
+# N = 17564 genes shared across two different gene matrix.
+gene.key <- intersect(colnames(data_transcript_all), row.names(data_transcript_cl) )
+
+## combine RNA matrix
+# data_transcript_all.2 <- column_to_rownames(data_transcript_all, "X")#
+data_transcript_all.3 <- data_transcript_all[, gene.key] %>% base::t()
+dim(data_transcript_all.3)
+
+data_transcript_cl.2 <- data_transcript_cl[gene.key, ]
+dim(data_transcript_cl.2)
+
+data_transcript_cl.merged <- cbind(data_transcript_cl.2, data_transcript_all.3)
+dim(data_transcript_cl.merged)
+
+## keep only the genes that have > log2(10) summed across the transcripts
+# 17564 transcripts to 17161 transcripts
+cutoff_expr <- log2(10)
+data_transcript_pdx_cl_common.10 <- data_transcript_cl.merged %>%
+  mutate(sum = rowSums(.)) %>%
+  filter(sum > cutoff_expr) %>%
+  select(-sum)
+
+## Make colData file for a DESeq2 subject
+colData.1 <- data.frame(sample = icc_key$Cell_line,
+                      Lineage = c(rep("bile duct", 56)))
+
+colData.2 <- data.frame(sample = other_annot$DepMap_ID,
+                        Lineage = other_annot$lineage) %>%
+  filter(sample %in% colnames(data_transcript_all.3))
+
+colData.3 <- rbind(colData.1, colData.2)
+
+## check sample # per GI cancer type
+table(colData.3$Lineage)
+
+## Version A. Clustering using threshold > log2(10)
+# A-1. convert log2 table back to TPM table
+data_transcript_pdx_cl_common_TPM <- data_transcript_pdx_cl_common.10^2
+
+# A-2. Verify that sample names and colnames are the same
+# make sure sample names are in the same order in sample and count table files
+all(colData.3$sample %in% colnames(data_transcript_pdx_cl_common_TPM))
+all(colData.3$sample == colnames(data_transcript_pdx_cl_common_TPM))
+cts <- as.data.frame.matrix( data_transcript_pdx_cl_common_TPM[, colData.3$sample] )
+all(colData.3$sample == colnames(cts))
+
+## A-3. Create a DEseqDataSet from txi count table
+cts <- round(cts)
+dds <- DESeqDataSetFromMatrix(countData = cts,
+                              colData = colData.3,
+                              design = ~ 1)
+
+## A-4. Perform a vst transformation on count data
+rld <- vst(dds, blind=TRUE)
+
+## use limma tool to remove batch effect for clutsering/PCA analysis
+## here we use this function to remove effects from source (PDX and cell line)
+bc <- assay(rld)
+bc <- limma::removeBatchEffect(bc, batch = rld$Source)
+assay(rld) <- bc
+
+## Normalized count table
+normalized_counts <- assay(rld) %>% t() # We need to transpose this data so each row is a sample
+
+## run UMAP
+umap_results <- umap::umap(normalized_counts)
+
+umap_plot_df <- data.frame(umap_results$layout) %>%
+  tibble::rownames_to_column("sample") %>%
+  dplyr::inner_join(colData.3, by = "sample")
+
+names(umap_plot_df) = c("sample", "UMAP1", "UMAP2", "Lineage")
+
+
+write_csv(umap_plot_df, paste0(output_directory, 'UMAP_flat_GI_cell_lines.csv'))
+
+umap_plot_df
+
+```
+
+### UMAP visual
+```{r gi-2, warning = F, fig.width=8, fig.height=8}
+
+## Format color
+
+color <- hcl.colors(8, palette = "Set2")
+
+cust.color = c("bile duct" = "#fb6a4a", "esophagus" = color[8],
+                              "gastric" = color[4], "liver" = color[2], "colorectal" = "grey30", "pancreas" = color[6])
+
+## read UMAP flat file
+umap_plot_df <- read.csv(paste0(output_directory, "UMAP_flat_GI_cell_lines.csv"), row.names = 1)
+
+## plotting
+ggplot(umap_plot_df, aes(x = UMAP1, y = UMAP2, color = Lineage)) +
+  ggtitle("DepMap - GI cancers") +
+  geom_point(size = 5,shape = 16, aes( color = Lineage), alpha = 0.7) +
+  scale_color_manual(values = cust.color) +
+  theme_bw() +
+  theme(text = element_text(size = 10),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0),
+        legend.position = 'right',
+        legend.text.align = 0,
+        legend.key.size = unit(0.3, 'cm'),
+        legend.spacing = unit(0.3, 'cm'),
+        panel.background = element_rect(colour = "black", fill = "white"),
+        axis.text.y=element_text(color="black", size=10),
+        axis.text.x=element_text(color="black", size=10))
+
+ggsave(paste0(output_directory, 'RNAseq_UMAP_GI_cell_lines.pdf'), units = 'in', width = 5, height = 4)
+```
+
+## CHOL cell lines vs TCGA CHOL patients
+Also include cell lines and patients of the other GI cancers to make contrasts. \break
+TCGA data was downloaded from [FIREHOSE Broad GDAC](https://gdac.broadinstitute.org/).\break
+Specifically, we use CHOL cholangiocarcinoma cohort (n = 51), COADREAD Colorectal adenocarcinoma cohort (n = 631), PAAD Pancreatic adenocarcinoma (n = 185), STAD Stomach adenocarcinoma (n = 443), ESCA Esophageal carcinoma (n = 185). Download from `mRNA-seq Preprocess package` and use `_RSEM_all` file. This analysis was done using `RSEM` read file. \break
+
+### clean up CHOL RSEM
+!!! NOTE !!!: Sample numbers don't add up. We have read counts for 49 CHOL cell lines while there are 56 cell lines with RNA data. The 7 missing samples are: ACH-001537 (KKU055), 4 cell lines from ACH-001834 (ICC10) series, ACH-001847 (ICC7), ACH-001855 (OZ). After an investigation, I found out that ICC10 was included in the newest DepMap database (22Q2). The rest 3 are still missing. Did these 3 samples fail to pass some QC steps so that they are not present in any of the DepMap portal version? \break
+
+### Integrate CHOL RSEM and other GI cancer RSEM
+```{r patient-rsem, warning=F}
+
+icc_key <- key %>% filter(RNA == "1" & Subtype != 'HCC')
+
+## Load RNAseq for CHOL cell lines
+btc_rna_reads_file = 'Main_Data/RNA/rna_cell_lines_expected_counts.csv'
+data_transcript_cl <- read.csv(paste0(input_directory, btc_rna_reads_file), row.names = 1)
+data_transcript_cl <- data_transcript_cl[, which(colnames(data_transcript_cl) %in% icc_key$Cell_line)]
+data_transcript_cl <- data_transcript_cl[, order(match(names(data_transcript_cl), icc_key$Cell_line))]#49
+rownames(data_transcript_cl) <- sub(" .*", "", rownames(data_transcript_cl))
+
+## Load RNAseq for other GI cancer cell lines
+depmap_sample_info_file = 'Additional_Data/DepMap/RNA_20Q2/public-20q2_v18-sample-info.csv'
+other.key <- read.csv(paste0(input_directory, depmap_sample_info_file))
+other.key <- other.key %>% filter(!(DepMap_ID %in% icc_key$DepMap_ID))
+key.liver <- other.key$DepMap_ID[other.key$lineage == "liver"]
+key.pancreas <- other.key$DepMap_ID[other.key$lineage == "pancreas"]
+key.colon <- other.key$DepMap_ID[other.key$lineage == "colorectal"]
+key.gastric <- other.key$DepMap_ID[other.key$lineage == "gastric"]
+key.esophagus <- other.key$DepMap_ID[other.key$lineage == "esophagus"]
+
+
+depmap_rna_reads_file = 'Additional_Data/DepMap/RNA_20Q2/public-20q2_v18-ccle-rnaseq-reads_cleaned.csv'
+data_transcript <- read.csv(paste0(input_directory, depmap_rna_reads_file), row.names = 1)
+data_transcript <- data_transcript[!(rownames(data_transcript) %in% icc_key$DepMap_ID), ]
+data_transcript_liver <- data_transcript[ which(rownames(data_transcript) %in% key.liver),] #24
+data_transcript_pancreas <- data_transcript[ which(rownames(data_transcript) %in% key.pancreas),] #51
+data_transcript_colon <- data_transcript[ which(rownames(data_transcript) %in% key.colon),] #67
+data_transcript_gastric <- data_transcript[ which(rownames(data_transcript) %in% key.gastric),] #42
+data_transcript_esophagus <- data_transcript[ which(rownames(data_transcript) %in% key.esophagus),] #32
+
+data_transcript_GI <- rbind(data_transcript_liver, data_transcript_pancreas, data_transcript_colon, data_transcript_gastric, data_transcript_esophagus)
+
+# name <- as.vector(colnames(data_transcript_GI))
+# new.name <- str_extract(colnames(data_transcript_GI), "[^..]+")
+# colnames(data_transcript_GI) = new.name
+
+# write.csv(data_transcript_GI, paste0(work_dir, 'RSEM_RNAseq_reads_20Q2_GI.csv'), row.names = T)
+
+data_transcript_GI_t <- t(data_transcript_GI) #58567
+
+gene.key <- intersect(rownames(data_transcript_GI_t), rownames(data_transcript_cl))
+
+data_transcript_cl_filtered = data_transcript_cl[which(rownames(data_transcript_cl)%in% gene.key) , ]
+data_transcript_GI_filtered = data_transcript_GI_t[which(rownames(data_transcript_GI_t)%in% gene.key) , ]
+
+gene.key=sort(gene.key)
+data_transcript_cl_filtered = data_transcript_cl_filtered[gene.key, ]
+data_transcript_GI_filtered = data_transcript_GI_filtered[gene.key, ]
+work_dir = paste0(input_directory, 'Patients_Data/TCGA-RSEM_GI/')
+## TCGA RSEM
+tcga_chol <- fread(file = paste0(work_dir, "CHOL_RNAseq/CHOL.uncv2.mRNAseq_RSEM_all.txt"), header = T) %>%
+  separate(col = `HYBRIDIZATION R` , into = c("geneName", 'ID'), sep = "\\|", remove = TRUE) %>%
+  distinct(geneName, .keep_all = TRUE) %>%
+  select(-ID) %>%
+  column_to_rownames(., "geneName") %>%
+  slice(-1)
+
+tcga_liver <- fread(file =  paste0(work_dir, "LIHC_RNAseq/LIHC.uncv2.mRNAseq_RSEM_all.txt"), header = T) %>%
+  separate(col = `HYBRIDIZATION R` , into = c("geneName", 'ID'), sep = "\\|", remove = TRUE) %>%
+  distinct(geneName, .keep_all = TRUE) %>%
+  select(-ID) %>%
+  column_to_rownames(., "geneName") %>%
+  slice(-1)
+
+tcga_pan <- fread(file =  paste0(work_dir, "PAAD_RNAseq/PAAD.uncv2.mRNAseq_RSEM_all.txt"), header = T) %>%
+  separate(col = `HYBRIDIZATION R` , into = c("geneName", 'ID'), sep = "\\|", remove = TRUE) %>%
+  distinct(geneName, .keep_all = TRUE) %>%
+  select(-ID) %>%
+  column_to_rownames(., "geneName") %>%
+  slice(-1)
+
+tcga_gas <- fread(file =  paste0(work_dir, "STAD_RNAseq/STAD.uncv2.mRNAseq_RSEM_all.txt"), header = T) %>%
+  separate(col = `HYBRIDIZATION R` , into = c("geneName", 'ID'), sep = "\\|", remove = TRUE) %>%
+  distinct(geneName, .keep_all = TRUE) %>%
+  select(-ID) %>%
+  column_to_rownames(., "geneName") %>%
+  slice(-1)
+
+tcga_eso <- fread(file =  paste0(work_dir, "ESGA_RNAseq/ESCA.uncv2.mRNAseq_RSEM_all.txt"), header = T) %>%
+  separate(col = `HYBRIDIZATION R` , into = c("geneName", 'ID'), sep = "\\|", remove = TRUE) %>%
+  distinct(geneName, .keep_all = TRUE) %>%
+  select(-ID) %>%
+  column_to_rownames(., "geneName") %>%
+  slice(-1)
+
+tcga_colo <- fread(file =  paste0(work_dir, "CRC_RNAseq/COADREAD.uncv2.mRNAseq_RSEM_all.txt"), header = T) %>%
+  separate(col = `HYBRIDIZATION R` , into = c("geneName", 'ID'), sep = "\\|", remove = TRUE) %>%
+  distinct(geneName, .keep_all = TRUE) %>%
+  select(-ID) %>%
+  column_to_rownames(., "geneName") %>%
+  slice(-1)
+
+common_rows <- Reduce(intersect, list(rownames(tcga_chol), rownames(tcga_liver), rownames(tcga_pan), rownames(tcga_gas),
+                                      rownames(tcga_eso), rownames(tcga_colo)))
+
+tcga_chol <- tcga_chol[common_rows, ]
+tcga_liver <- tcga_liver[common_rows, ]
+tcga_pan <- tcga_pan[common_rows, ]
+tcga_gas <- tcga_gas[common_rows, ]
+tcga_eso <- tcga_eso[common_rows, ]
+tcga_colo <- tcga_colo[common_rows, ]
+
+
+
+data_tcga <- cbind(tcga_chol, tcga_liver, tcga_pan, tcga_gas, tcga_eso, tcga_colo)
+
+
+## combine cell line and patient matrix
+gene.key.final <- intersect(rownames(data_tcga), rownames(data_transcript_cl_filtered)) #15709
+
+# data_transcript_cl_filtered <- data_transcript_cl
+# data_transcript_GI_filtered <- data_transcript_GI_t
+data_transcript_tcga <- data_tcga
+
+data_transcript_tcga <- data_transcript_tcga[which( rownames(data_transcript_tcga)%in% gene.key.final) , ]
+
+data_transcript_merged <- merge(data_transcript_cl_filtered, data_transcript_GI_filtered, by.x = 0, by.y = 0, all.x = T, all.y = F)
+data_transcript_merged <- data_transcript_merged[which(data_transcript_merged$Row.names %in% gene.key.final) , ]
+data_transcript_merged_2 <- merge(data_transcript_merged, data_transcript_tcga, by.x = "Row.names", by.y = 0, all.x = F, all.y = T) %>% column_to_rownames(., "Row.names")
+```
+
+### UMAP calculation
+```{r patient-umap}
+## colData
+colData.cl <- data.frame(sample = c(
+                                    colnames(data_transcript_cl_filtered),
+                                    rownames(data_transcript_liver),
+                                    rownames(data_transcript_pancreas),
+                                    rownames(data_transcript_colon),
+                                    rownames(data_transcript_gastric),
+                                    rownames(data_transcript_esophagus)
+                                    ),
+                      source = "cell line",
+                      lineage = c(
+                        rep("bile duct", length(colnames(data_transcript_cl_filtered))),
+                        rep("liver", length(rownames(data_transcript_liver))),
+                        rep("pancreas", length(rownames(data_transcript_pancreas))),
+                        rep("colon", length(rownames(data_transcript_colon))),
+                        rep("gastric", length(rownames(data_transcript_gastric))),
+                        rep("esophagus", length(rownames(data_transcript_esophagus)))
+                                ))
+
+
+colData.tcga <- data.frame(sample = c(colnames(tcga_chol),
+                                      colnames(tcga_liver),
+                                      colnames(tcga_pan),
+                                      colnames(tcga_gas),
+                                      colnames(tcga_eso),
+                                      colnames(tcga_colo)),
+                           source = "patient tumor",
+                           lineage = c(
+                             rep("bile duct", length(colnames(tcga_chol))),
+                             rep("liver", length(colnames(tcga_liver))),
+                             rep("pancreas", length(colnames(tcga_pan))),
+                             rep("gastric", length(colnames(tcga_gas))),
+                             rep("esophagus", length(colnames(tcga_eso))),
+                             rep("colon", length(colnames(tcga_colo)))
+                           ))
+
+colData.3 <- rbind(colData.cl, colData.tcga)
+```
+
+```{r patient-umap-2}
+set.seed(seed)
+# A-2. Verify that sample names and colnames are the same
+# make sure sample names are in the same order in sample and count table files
+all(colData.3$sample %in% colnames(data_transcript_merged_2))
+all(colData.3$sample == colnames(data_transcript_merged_2))
+cts <- as.data.frame.matrix( data_transcript_merged_2[, colData.3$sample] )
+all(colData.3$sample == colnames(cts))
+
+## A-3. Create a DEseqDataSet from txi count table
+cts <- round(cts)
+
+dds <- DESeqDataSetFromMatrix(countData = cts,
+                              colData = colData.3,
+                              design = ~ 1)
+
+## A-4. Perform a vst transformation on count data
+rld <- vst(dds, blind=TRUE)
+
+## use limma tool to remove batch effect for clutsering/PCA analysis
+## here we use this function to remove effects from source (PDX and cell line)
+bc <- assay(rld)
+bc <- limma::removeBatchEffect(bc, batch = rld$source)
+assay(rld) <- bc
+
+## Normalized count table
+normalized_counts <- assay(rld) %>% t() # We need to transpose this data so each row is a sample
+
+
+```
+
+### UMAP visual
+
+```{r patient-plot1}
+## run UMAP
+set.seed(seed)
+
+umap_results <- umap::umap(normalized_counts)
+
+umap_plot_df <- data.frame(umap_results$layout) %>%
+  tibble::rownames_to_column("sample") %>%
+  dplyr::inner_join(colData.3, by = "sample")
+
+names(umap_plot_df) = c("sample", "UMAP1", "UMAP2", "source", "lineage")
+
+umap_plot_df$lineage <- factor(umap_plot_df$lineage, level = c("esophagus", "gastric", "liver", "colon", "pancreas", "bile duct"))
+
+write.csv(umap_plot_df, paste0(output_directory, 'UMAP_TCGA_DepMap_GI_flat.csv'), row.names = F)
+
+umap_plot_df
+```
+
+```{r patient-plot2, warning=F, width = 1.5, height = 1.5}
+
+## read UMAP flat file
+umap_plot_df <- read.csv(paste0(output_directory, 'UMAP_TCGA_DepMap_GI_flat.csv'), row.names = 1)
+umap_plot_df$lineage <- factor(umap_plot_df$lineage, level = c("esophagus", "gastric", "liver", "colon", "pancreas", "bile duct"))
+head(umap_plot_df)
+
+## create layers for data visual
+umap_plot_df_cl <- umap_plot_df %>% filter(source == "cell line" & lineage != "bile duct")
+umap_plot_df_cl_chol <- umap_plot_df %>% filter(source == "cell line" & lineage == "bile duct")
+umap_plot_df_pat <- umap_plot_df %>% filter( source == "patient tumor" & lineage != "bile duct")
+umap_plot_df_chol <- umap_plot_df %>% filter( lineage == "bile duct" & source == "patient tumor")
+
+
+## Format color
+color <- hcl.colors(8, palette = "Set2")
+
+## UMAP plotting
+ggplot(umap_plot_df, aes(x = UMAP1, y = UMAP2, shape = source)) +
+  ggtitle('DepMap and TCGA – GI cancers')+
+    geom_point(data = umap_plot_df_pat, size = 4, aes(shape = source, color = lineage), alpha = 1/3) +
+    geom_point(data = umap_plot_df_cl, size = 4, aes(shape = source, color = lineage), alpha = 0.4) +
+  geom_point(data = umap_plot_df_cl_chol, size = 4,  aes(shape = source, color = lineage), alpha = 0.5) +
+  geom_point(data = umap_plot_df_chol, size = 5.5,  aes(shape = source, color = lineage), alpha = 1) +
+  scale_colour_manual(values = c("bile duct" = "#fb6a4a", "esophagus" = color[8],
+                              "gastric" = color[4], "liver" = color[2], "colon" = "grey30", "pancreas" = color[6])) +
+  scale_shape_manual(values = c("cell line" = 16, "patient tumor" = 3)) +
+  theme_bw() +
+  theme(text = element_text(size = 8),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0),
+        legend.position = 'right',
+        legend.text.align = 0,
+        legend.key.size = unit(0.8, 'lines'),
+        panel.background = element_rect(colour = "black", fill = "white"),
+        axis.text.y=element_text(color="black", size=8),
+        axis.text.x=element_text(color="black", size=8)) +
+  guides(colour = guide_legend(override.aes = list(size = 3)),
+         shape = guide_legend(override.aes = list(color = "black")))
+
+
+ggsave(paste0(output_directory,  'RNAseq_UMAP_allGI_cl_vs_patient.pdf'), units = 'in', width = 6, height = 3)
+
+```
+
+```{r zoom}
+
+
+## UMAP zoom-in
+ggplot(umap_plot_df, aes(x = UMAP1, y = UMAP2, shape = source)) +
+  # geom_point(data = umap_plot_df, size = 5.5, aes(shape = source), color = "black" ) +
+#   geom_point(data = umap_plot_df, size = 7.3, aes(shape = source, color = lineage), alpha = 0.8) +
+# geom_point(data = umap_plot_df_chol, size = 8, aes(shape = source, color = lineage)) +
+      geom_point(data = umap_plot_df_pat, size = 8, aes(shape = source, color = lineage), alpha = 1) +
+    geom_point(data = umap_plot_df_cl, size = 8, aes(shape = source, color = lineage), alpha = .7) +
+  geom_point(data = umap_plot_df_cl_chol, size = 8,  aes(shape = source, color = lineage), alpha = .7) +
+  geom_point(data = umap_plot_df_chol, size = 9.5,  aes(shape = source, color = lineage), alpha =1) +
+   scale_colour_manual(values = c("bile duct" = "#fb6a4a", "esophagus" = color[8],
+                              "gastric" = color[4], "liver" = color[2], "colon" = "grey30", "pancreas" = color[6])) +
+  scale_shape_manual(values = c("cell line" = 16, "patient tumor" = 3)) +
+  scale_x_continuous("", limits = c(-.2, .3)) +
+  scale_y_continuous("", limits = c(-5, -3.6)) +
+  # scale_x_continuous("", limits = c(-1.25, -0.9)) +
+  # scale_y_continuous("", limits = c(-5, -.65)) +
+  # scale_x_continuous("", limits = c(-0.5, 0.2)) +
+  # scale_y_continuous("", limits = c(3, 5)) +
+  theme_bw() +
+  theme(text = element_text(size = 1, color = "white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0),
+        legend.position = 'none',
+        axis.ticks=element_blank(),
+        legend.text.align = 0,
+        legend.key.size = unit(1, 'lines'),
+        panel.background = element_rect(colour = "black", fill = "white"),
+        axis.text.y=element_text(color="white", size=1),
+        axis.text.x=element_text(color="white", size=1))
+
+ggsave(paste0(output_directory,  'RNAseq_UMAP_allGI_cl_vs_patient_zoom2.pdf'), units = 'in', width =2, height = 2)
+
+
+```
+
+## Session info
+```{r session-info}
+
+sessionInfo()
+
+```
