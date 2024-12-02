@@ -12,8 +12,8 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 
 
-from BTC_Cell_Line_Atlas_Manuscript.scripts.visualization import MyVisualization
-from BTC_Cell_Line_Atlas_Manuscript.scripts.io_library import MyLib
+from scripts.visualization import MyVisualization
+from scripts.io_library import MyLib
 
 seed = 2023
 

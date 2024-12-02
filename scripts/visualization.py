@@ -24,7 +24,7 @@ import re
 
 
 
-import BTC_Cell_Line_Atlas_Manuscript.scripts.io_library as io_library
+import scripts.io_library as io_library
 
 
 plt.rcParams['font.family'] = 'Arial'

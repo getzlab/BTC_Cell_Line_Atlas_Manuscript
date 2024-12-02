@@ -2,11 +2,9 @@ from datetime import datetime
 import pandas as pd
 import os
 import sys
-import socket
 import pickle
 import h5py
 import numpy as np
-import random
 
 input_dir = None
 output_dir = None

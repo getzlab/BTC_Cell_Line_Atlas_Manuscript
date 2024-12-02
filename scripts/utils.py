@@ -20,9 +20,9 @@ from scipy.stats import median_abs_deviation
 from itertools import product
 import itertools
 
-from BTC_Cell_Line_Atlas_Manuscript.scripts.io_library import MyLib
-from BTC_Cell_Line_Atlas_Manuscript.scripts.visualization import MyVisualization
-from BTC_Cell_Line_Atlas_Manuscript.scripts.clustering_utils import Clustering
+from scripts.io_library import MyLib
+from scripts.visualization import MyVisualization
+from scripts.clustering_utils import Clustering
 
 
 def compute_corr(args):

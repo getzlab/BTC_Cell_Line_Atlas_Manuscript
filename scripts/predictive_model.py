@@ -12,8 +12,8 @@ from multiprocessing import Pool, cpu_count
 import multiprocessing
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 
-import BTC_Cell_Line_Atlas_Manuscript.scripts.io_library as io_library
-from BTC_Cell_Line_Atlas_Manuscript.scripts.io_library import MyLib
+import scripts.io_library as io_library
+from scripts.io_library import MyLib
 
 
 initial_seed = 2023

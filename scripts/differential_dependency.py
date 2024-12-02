@@ -6,9 +6,8 @@ from scipy.stats import ranksums
 from statsmodels.stats.multitest import fdrcorrection
 
 
-from BTC_Cell_Line_Atlas_Manuscript.scripts.io_library import MyLib
-# from BTC_Cell_Line_Atlas_Analysis.scripts.utils import Utils
-from BTC_Cell_Line_Atlas_Manuscript.scripts.visualization import MyVisualization
+from scripts.io_library import MyLib
+from scripts.visualization import MyVisualization
 
 seed = 2023
 class DifferentialDependency:
