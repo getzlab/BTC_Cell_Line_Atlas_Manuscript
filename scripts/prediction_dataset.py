@@ -186,9 +186,9 @@ working_dir = "/Users/nkarisan/PycharmProjects/BTC_Cell_Line_Atlas_Manuscript"
 os.chdir(working_dir)
 
 io_library.input_dir = 'input_data/'
-io_library.output_dir = 'Remaining_Analyses/output_figs_random_forest/dependency_prediction_data/'
+io_library.output_dir = 'predictive_model/output_files_RF/dependency_prediction_data/'
 
-upset_file = 'cell_lines_master_upset_2024-4-13.csv'
+upset_file = 'cell_lines_master_upset_2025-2-24.csv'
 raw_upset_df = MyLib.load_csv(upset_file, index_col=0)
 upset_df = raw_upset_df[(raw_upset_df['CRISPR'] == 1) & (raw_upset_df['Subtype'] != 'HCC')]
 upset_df = upset_df[["Subtype", 'DepMap_ID']]
@@ -200,15 +200,16 @@ raw_datasets_dic = dict()
 data_dir = 'Additional_Data/DepMap/'
 
 
-raw_datasets_dic['CRISPR'] = MyLib.load_csv(os.path.join(data_dir, 'CRISPRGeneEffect_internal-23q2-1e49_v97_filtered_by_public_ids.csv'), index_col=0)
-raw_datasets_dic['RNA'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsExpressionProteinCodingGenesTPMLogp1_internal-23q2-1e49_v97_filtered_by_public_ids.csv'), index_col=0)
-raw_datasets_dic['CNV'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsCNGene_internal-23q2-1e49_v97_filtered_by_public_ids.csv'), index_col=0)
-raw_datasets_dic['MutHot'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsSomaticMutationsMatrixHotspot_internal-23q2-1e49_v97_filtered_by_public_ids.csv'),
+raw_datasets_dic['CRISPR'] = MyLib.load_csv(os.path.join(data_dir, 'CRISPRGeneEffect.csv'), index_col=0)
+raw_datasets_dic['CRISPR'] = raw_datasets_dic['CRISPR'].drop('ACH-000145') # not part of the initial dataset
+raw_datasets_dic['RNA'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsExpressionProteinCodingGenesTPMLogp1.csv'), index_col=0)
+raw_datasets_dic['CNV'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsCNGene.csv'), index_col=0)
+raw_datasets_dic['MutHot'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsSomaticMutationsMatrixHotspot.csv'),
                                             index_col=0).astype('int64')
-raw_datasets_dic['MutDam'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsSomaticMutationsMatrixDamaging_internal-23q2-1e49_v97_filtered_by_public_ids.csv'),
+raw_datasets_dic['MutDam'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsSomaticMutationsMatrixDamaging.csv'),
                                             index_col=0).astype('int64')
-raw_datasets_dic['Fusion'] = MyLib.load_csv(os.path.join(data_dir,'OmicsFusionFiltered_internal-23q2-1e49_v97_filtered_by_public_ids.csv'))
-raw_datasets_dic['MutOther'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsSomaticMutations_internal-23q2-1e49_v97_filtered_by_public_ids.csv'))
+raw_datasets_dic['Fusion'] = MyLib.load_csv(os.path.join(data_dir,'OmicsFusionFiltered.csv'))
+raw_datasets_dic['MutOther'] = MyLib.load_csv(os.path.join(data_dir, 'OmicsSomaticMutations.csv'))
 
 DataSet.create_dataset(raw_datasets_dic, upset_df=upset_df, file_suffix='BTC')
 

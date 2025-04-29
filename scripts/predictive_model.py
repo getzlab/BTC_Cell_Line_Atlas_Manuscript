@@ -393,9 +393,9 @@ if __name__ == "__main__":
     working_dir = "/Users/nkarisan/PycharmProjects/BTC_Cell_Line_Atlas_Manuscript"
     os.chdir(working_dir)
     io_library.input_dir = 'input_data/'
-    io_library.output_dir = 'input_data/random_forest_results/'
+    io_library.output_dir = 'predictive_model/output_files_RF/random_forest_results/'
 
-    data_dir = 'Remaining_Analyses/output_figs_random_forest/dependency_prediction_data' # create a folder with this name inside input_data
+    data_dir = 'predictive_model/output_files_RF/dependency_prediction_data' # create a folder with this name inside input_data
     main_features_file = 'Features_BTC.hdf5'
     main_targets_file = 'Targets_BTC_GeneEffects.hdf5'
     other_CCLE_features_file = 'Features_Other_CCLE.hdf5'
@@ -426,6 +426,7 @@ if __name__ == "__main__":
                     'IDH3A (3419)', 'DHODH (1723)', 'NMNAT1 (64802)', 'ABI1 (10006)', 'CDH1 (999)', 'PIK3CA (5290)', 'PTPN11 (5781)',
                     'PRMT5 (10419)'
                     ]
+    # target_genes = ['TP63 (8626)'] # Run for a single gene
     target_genes = sorted(target_genes)
 
     BaselineLearner.start(main_features_df, main_targets_df, target_genes)

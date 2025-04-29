@@ -95,6 +95,7 @@ class DifferentialDependency:
         res_df.reset_index(inplace=True, drop=True)
 
         res_df = res_df.sort_values('effect_size', ascending=False).sort_values('q-value', ascending=True)
+        res_df.reset_index(inplace=True, drop=True)
         MyLib.save_csv(res_df, f'{group}_{filename}all_features_stats.csv', index=False)
         return res_df
 
@@ -111,7 +112,7 @@ class DifferentialDependency:
         res_df['feature'] = res_df['feature'].apply(lambda x: x.split(' (')[0])
         res_df = res_df.dropna(axis=1, how='all')
         res_df = res_df.dropna(axis=0)
-        # res_df = res_df[res_df['feature'].isin(gene_effect_df.columns.tolist())]
+
         res_df['q-value'] = fdrcorrection(res_df['p-value'].values)[1]
 
         res_filtered_df = res_df[res_df.apply(lambda x: (x['p-value'] < p_val_thr and
@@ -153,16 +154,13 @@ class DifferentialDependency:
 
             # volcano plot
             if (~up_regulated and down_df.shape[0] > 0) or (up_regulated and up_df.shape[0] > 0):
-                MyVisualization.Volcano_plot(res_df, x_col='effect_size', y_col='q-value',
-                                             title=gene.split(' (')[0] + ' ' + title,
-                                             x_label='Effect size', label_col='feature', down_df=down_df,
-                                             xtick_step=xtick_step, ytick_step=ytick_step, top_df=top_df,
+                MyVisualization.Volcano_plot(res_df, y_col='q-value', x_col='effect_size',
+                                             title=gene.split(' (')[0] + ' ' + title, x_label='Effect size',
+                                             label_col='feature', force_points=force_points, force_text=force_text,
                                              xlim_right=xlim_right, xlim_left=xlim_left, ylim_top=ylim_top,
-                                             ylim_bottom=ylim_bottom,
-                                             force_points=force_points, force_text=force_text, up_df=up_df,
-                                             cut_off_labels=cut_off_labels,
-                                             point_size=20,
-                                             save_figure=save_figure)
+                                             ylim_bottom=ylim_bottom, cut_off_labels=cut_off_labels, down_df=down_df,
+                                             up_df=up_df, top_df=top_df, xtick_step=xtick_step, ytick_step=ytick_step,
+                                             point_size=20, save_figure=save_figure)
                 temp_df.set_index('feature', inplace=True, drop=True)
 
                 # features_l += [f for f in temp_df.index.tolist() if f not in features_l]

@@ -1,0 +1,4 @@
+From TCGA portal
+
+CHOL.snp__genome_wide_snp_6__broad_mit_edu__Level_3__segmented_scna_minus_germline_cnv_hg19__seg.seg.txt
+del_genes.conf_99.txt

@@ -41,7 +41,7 @@ setwd(working_directory)
 input_directory <- 'input_data/'
 output_directory <- 'Figure1/output_fig1/'
 
-upset_file <- 'cell_lines_master_upset_2024-4-13.csv'
+upset_file <- 'cell_lines_master_upset_2025-2-24.csv'
 upset_df <- read.csv(paste0(input_directory, upset_file), row.name = 'Cell_line')
 upset_df <- subset(upset_df, Subtype != "HCC")
 upset_df <- subset(upset_df, select = -c(Protein_replicates))
@@ -52,44 +52,44 @@ upset_df <- upset_df[order(rownames(upset_df)), ]
 
 ```{r circ}
 
-
+rows_to_modify <- which(upset_df$In_house == 1)
+in_house_lines_l = row.names(upset_df)[rows_to_modify]
 BTC_upset_df <- subset(upset_df, select = -c(DepMap_ID))
 levels <- c('ICC', 'ECC', 'GBC', 'AC')
 subtypes_colors = c("#bf812d", "#35978f", "#9970ab", "#c9bb3a")
 labels <- 8:11
 
 BTC_upset_df$Type <- factor(BTC_upset_df$Subtype, levels = levels, labels = labels)
-# BTC_upset_df$Type <- as.integer(BTC_upset_df$Type)
 
 counts = c()
 start = 2
 for(tp in levels){
   counts = c(counts, dim(BTC_upset_df[BTC_upset_df[, 'Subtype']==tp,])[1])
-  # df.3[df.3[,'Subtype']==tp,'Type'] <- as.character(start)
   start <- start + 1
 }
 gaps = rep(10, length(counts)-1)
 gaps = append(gaps, c(45))
-grey_shades = c('white', '#c9c7c7', '#928e85','#c9c7c7', '#928e85','#c9c7c7', '#928e85','#c9c7c7')
+grey_shades = c('white', '#c9c7c7', '#928e85','#c9c7c7', '#928e85','#c9c7c7', '#928e85','#c9c7c7', '#928e85')
 BTC_upset_df <- subset(BTC_upset_df, select = -c(Subtype))
 BTC_upset_df <- BTC_upset_df %>% mutate_all(funs(replace(., is.na(.), 0)))
-values <- c('CRISPR' = 1, 'Mutation' = 2, 'CNA' = 3, 'RNA' = 4, 'Fusion' = 5, 'Protein' = 6, 'PDX' = 7)
+values <- c('CRISPR' = 1, 'Mutation' = 2, 'CNA' = 3, 'RNA' = 4, 'Fusion' = 5, 'Protein' = 6, 'PDX' = 7, 'In_house' = 8)
 row_names = row.names(BTC_upset_df)
 BTC_upset_df <- map2_df(BTC_upset_df, names(BTC_upset_df), ~ ifelse(.x==1, values[.y], .x))
-# BTC_upset_df <- as.data.frame(BTC_upset_df)
 
-BTC_upset_df$Type = BTC_upset_df$Type+6
-row.names(BTC_upset_df) = row_names
-rows = rownames(BTC_upset_df)
-BTC_upset_df <- sapply(BTC_upset_df, as.numeric)#[,1:7]
+BTC_upset_df$Type = BTC_upset_df$Type+7
+BTC_upset_df <- sapply(BTC_upset_df, as.numeric)
 BTC_upset_df = data.frame(BTC_upset_df)
 BTC_upset_df$Type = BTC_upset_df$Type +1
-rownames(BTC_upset_df) = rows
-BTC_upset_df <- BTC_upset_df %>% select(Type, CRISPR, Mutation, CNA, RNA, Fusion, Protein, PDX) %>% arrange(Type)
-col_fun1 = colorRamp2(c(0, 1, 2, 3, 4, 5,6,7,8,9,10,11), append(grey_shades, subtypes_colors))
+rownames(BTC_upset_df) = row_names
+BTC_upset_df <- BTC_upset_df %>% select(Type, CRISPR, Mutation, CNA, RNA, Fusion, Protein, PDX, In_house) %>% arrange(Type)
+col_fun1 = colorRamp2(c(0, 1, 2, 3, 4, 5,6,7,8,9,10,11,12), append(grey_shades, subtypes_colors))
 
 colnames(BTC_upset_df)[colnames(BTC_upset_df) == "Type"] <- "Subtype"
 ## Plotting
+rnames <- rownames(BTC_upset_df)
+to_update <- rnames %in% in_house_lines_l
+rnames[to_update] <- paste0("MGH-", rnames[to_update])
+rownames(BTC_upset_df) <- rnames
 
 circos.clear()
 circos.par(start.degree = 45, gap.after = gaps)
@@ -148,7 +148,6 @@ Oncoplot
 ```{r heatmap,  fig.width=15, fig.height=9}
 ## cell line key
 subtype <- upset_df[which(upset_df$Mutation==1),] %>% dplyr::select(Subtype)
-# subtype$ModelID = row.names(subtype)
 subtype$Subtype <- factor(subtype$Subtype, level = c("ICC", "ECC", "GBC", "AC"))
 subtype = subtype %>% arrange(Subtype)
 
@@ -158,7 +157,7 @@ goi_tb = read.csv(paste0(input_directory, goi_file))
 
 mutation.1 <- read.csv(paste0(input_directory,'Additional_Data/Selected_Lists/oncoplot/fig1_data.csv'))
 mutation.1$HugoSymbol <- as.character(mutation.1$HugoSymbol)
-# goi = unique(mutation.1$HugoSymbol)
+
 mutation.2 <- mutation.1 %>% dplyr::select(HugoSymbol, VariantInfo, ModelID)
 
 ## CNA calls
@@ -195,42 +194,39 @@ mutation.3 <- merge(mutation_design, subtype, by.x = "ModelID", by.y = 0, all.x 
 
 mutation.3$Subtype <- factor(mutation.3$Subtype, levels = c("ICC", "ECC", "GBC", "AC"))
 
-# gene.order <- mutation.3 %>%
-#   group_by(variable) %>%
-#   summarise(Frequency = sum(value)) %>% arrange(-Frequency)
-
-
 mutation_counts <- mutation.2 %>%
   group_by(HugoSymbol) %>%
   summarise(MutationCount = n_distinct(ModelID)) %>%
-  mutate(MutationCount = ifelse(HugoSymbol %in% c('MYC', 'AXIN1', 'APC'), MutationCount, MutationCount + 1))
+  mutate(MutationCount = ifelse(HugoSymbol %in% c('MYC', 'AXIN1', 'APC'), MutationCount, MutationCount + 1)) # Add 1 to the mutation count for all genes except those with a dummy mutation.
 
+# Sum mutation and CNV counts.
 for (i in 1:length(mutation_counts$HugoSymbol)) {
   if (mutation_counts$HugoSymbol[i] %in% names(cnv_counts)) {
     mutation_counts$MutationCount[i] <- mutation_counts$MutationCount[i] + cnv_counts[[mutation_counts$HugoSymbol[i]]]
   }
 }
 
+# Adjust alteration counts to account for overlapping mutations and CNVs.
+idx <- which(cnv_design == "CNA", arr.ind = TRUE)
+for (i in row.names(idx)) {
+  row_idx <- idx[i, 'row']
+  col_idx <- idx[i, 'col']
+  model_id <- rownames(cnv_design)[row_idx]
+  gene <- colnames(cnv_design)[col_idx]
+  if (any(mutation.2$ModelID == model_id & mutation.2$HugoSymbol == gene)) {
+    j <- which(mutation_counts$HugoSymbol == gene)
+    mutation_counts$MutationCount[j] <- mutation_counts$MutationCount[j] - 1
+  }
+}
+
 mutation_counts = merge(mutation_counts, goi_tb, by = 'HugoSymbol')
 mutation_counts <- mutation_counts %>%
  arrange(-order)%>%
-        # arrange(MutationCount)%>%
   mutate(HugoSymbol = factor(HugoSymbol, levels = HugoSymbol))
 
-
-
-# mutation_counts <- mutation_counts %>%
-#   arrange(MutationCount) %>%
-#   mutate(HugoSymbol = factor(HugoSymbol, levels = HugoSymbol))
-
 mutation.3 <- merge(mutation.3, mutation_counts, by.x = "variable", by.y = "HugoSymbol", all.x = TRUE)
-# mutation.3 <- mutation.3[order(mutation.3$MutationCount), ]
-# mutation.3$variable <- factor(mutation.3$variable, levels = unique(mutation.3$variable))
+
 mutation.3$variable <- factor(mutation.3$variable, levels = unique(mutation_counts$HugoSymbol))
-
-# mutation.3$ModelID <- factor(mutation.3$ModelID, levels = unique(mutation.3$ModelID[order(mutation.3$Subtype)]))
-
-
 
 mutation.3 <- mutation.3 %>% arrange(Subtype)
 
@@ -297,12 +293,12 @@ b = ggplot() +
 d = ggplot(mutation_counts, aes(x = HugoSymbol, y = MutationCount)) +
   geom_bar(
     stat = "identity",
-    fill = "#7c7d80"
+    fill = "#d4d4d4"
   ) +
          scale_y_continuous(limits = c(0, 40), breaks = seq(0, 40, by = 5)) +
   ylab("Alteration Count") +  # Move ylab to the correct position
   geom_text(
-    aes(label = MutationCount-1),
+    aes(label = MutationCount-1), # Correct alteration counts by subtracting one.2
     vjust = .5,
     hjust = -.5,
     size = 2

@@ -1,6 +1,4 @@
 import os
-import glob
-import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -12,11 +10,7 @@ import category_encoders as ce
 from multiprocessing import Pool
 from multiprocessing import cpu_count
 from sklearn.neighbors import NearestNeighbors
-from sklearn.manifold import MDS
-from scipy.cluster.hierarchy import linkage, dendrogram
-from sklearn.metrics import pairwise_distances
 from scipy.stats import pearsonr
-from scipy.stats import median_abs_deviation
 from itertools import product
 import itertools
 
@@ -31,6 +25,80 @@ def compute_corr(args):
     """
     df1, df2, col = args
     return df1.corrwith(df2[col])
+
+class Dataset:
+
+    @staticmethod
+    def filter_columns(mat_df, threshold=1):
+        sum_sr = mat_df.sum(axis=0)
+        genes = sum_sr.loc[sum_sr >= threshold].index.tolist()
+        mat_df = mat_df.loc[:, genes]
+        return mat_df
+
+    @staticmethod
+    def association_matrix(data_df, feature_col, na_value, target_col=None):
+        features = sorted(data_df[feature_col].unique())
+        cell_feat_df = pd.DataFrame(na_value, index=sorted(data_df['ModelID'].unique()), columns=features)
+        for col in features:
+            cur_cells = data_df[data_df[feature_col] == col]['ModelID']
+            if target_col is None:
+                cell_feat_df.loc[cur_cells, col] = 1
+            else:
+                indices = data_df[data_df[feature_col] == col].index
+                cell_feat_df.loc[cur_cells, col] = data_df.loc[indices, target_col].values
+
+        return cell_feat_df
+
+    @staticmethod
+    def create_other_mutation_df(all_mut_df, df):
+        all_mut_df = all_mut_df.astype('int64')
+        df = df.astype('int64')
+        df[df > 1] = 1
+        df = df.rename(columns={col:col.split(' (')[0] for col in df.columns})
+        df1, df2 = Utils.match_matrices(all_mut_df, df)
+
+        shared_df = df1 & df2
+        other_df = df1 ^ shared_df
+        all_mut_df.loc[other_df.index, other_df.columns] = other_df
+        return all_mut_df
+
+    @staticmethod
+    def create_dataset(upset_df, raw_datasets_dic, mut_maf_df):
+        """
+            Driver Mut.	Driver mutations
+
+        """
+        ids = upset_df['DepMap_ID'].dropna().values.tolist()
+
+        mat_names = ['CRISPR', 'Mut_Hot', 'Mut_Dam', 'CNV']
+        datasets_dic = dict()
+
+        for ele in raw_datasets_dic:
+            if ele in mat_names:
+                indices = sorted(set.intersection(set(ids), set(raw_datasets_dic[ele].index)))
+                datasets_dic[ele] = raw_datasets_dic[ele].loc[indices, :]
+            else:
+                datasets_dic[ele] = raw_datasets_dic[ele][raw_datasets_dic[ele]['ModelID'].isin(ids)]
+
+
+        datasets_dic['Fusion'] = Dataset.association_matrix(datasets_dic['Fusion'], feature_col='FusionName', na_value=0)
+
+        for cur_mat in datasets_dic:
+            df = datasets_dic[cur_mat].reset_index()
+            df['index'] = df['index'].apply(lambda x: upset_df[upset_df['DepMap_ID'] == x].index.values[0])
+            df.set_index('index', inplace=True)
+            datasets_dic[cur_mat] = df.reindex(sorted(df.columns), axis=1)
+
+        all_mut_df = Dataset.association_matrix(mut_maf_df, feature_col='HugoSymbol', na_value=0)
+        all_mut_df = all_mut_df.loc[datasets_dic['Mut_Hot'].index, :]
+        other_mut_df = Dataset.create_other_mutation_df(all_mut_df, datasets_dic['Mut_Hot']) # remove hotspot mutations
+        other_mut_df = Dataset.create_other_mutation_df(other_mut_df, datasets_dic['Mut_Dam']) # remove damaging mutations
+        datasets_dic['Mut_other'] = Dataset.filter_columns(other_mut_df)
+
+        datasets_dic['Fusion'].loc['ICC10-8', 'FGFR2--PHGDH'] = 1  # The cell line is derived from an FGFR2 fusion patient same as ICC10-6
+
+        return datasets_dic
+
 
 class Utils:
     subtype_dic = {'AC': "#c9bb3a", 'ECC': "#35978f", 'GBC': "#9970ab",
@@ -81,6 +149,24 @@ class Utils:
         return data_df1[matched_features], data_df2[matched_features]
 
     @staticmethod
+    def match_matrices(df1, df2):
+        cols = sorted(set(df1.columns).intersection(set(df2.columns)))
+        df1, df2 = Utils.match_rows_df(df1[cols], df2[cols])
+        return (df1, df2)
+
+    @staticmethod
+    def frequent_essential_genes(df, disease=''):
+        melted_df = pd.melt(df, value_vars=df.columns, var_name='Cell_Line', value_name='Gene')
+        melted_df['Gene'] = melted_df['Gene'].apply(lambda x:x.split(' (')[0])
+        gene_counts = melted_df['Gene'].value_counts()
+        gene_counts.name = 'count'
+        sorted_genes_df = gene_counts.sort_values(ascending=False)
+
+        print("Sorted list of genes and their frequencies:")
+        MyLib.save_csv(sorted_genes_df, f'{disease}_Preferential Dependencies.csv')
+        return sorted_genes_df
+
+    @staticmethod
     def pdx_cell_line_distance(pdx_df, cl_df, save_figure=False):
         k = pdx_df.shape[0]
         knn_model = NearestNeighbors(n_neighbors=k, metric='euclidean')
@@ -89,14 +175,10 @@ class Utils:
         df = pd.DataFrame({'Cell_line':cl_df.index, 'PDX':pdx_df.index, 'K':np.nan})
         for i, pdx_sample in enumerate(pdx_df.index):
             df.loc[i, 'K'] = np.where(indices[i] == i)[0]+1
-            # cl_df.iloc[indices[i], :].index
         df = df.sort_values(by=['K'], ascending=False)
         df['K'] = df['K'].astype(int)
-        # title ='Dispersion of $K$ Nearest Cell Line Values in Cell Line-PDX Pairs'
-        # MyVisualization.plot_histogram(df['K'], ytick_step=1, xtick_step=1, xlim=23, ylim=17,
-        #                                xlabel=f'$K$', ylabel='Count', title=title)
         title = f'Dispersion of $K$ Nearest Cell Line Values'
-        MyVisualization.plot_catplot(df[['K']], x_col='K', ytick_step=2, ylim=18, title_height=.98, color_code='gray',
+        MyVisualization.plot_catplot(df[['K']], x_col='K', ytick_step=2, ylim=18, title_height=.98, color_code='#d4d4d4',
                                        xlabel=f'$K$', ylabel='Count', title=title,
                                      figure_width=3, figure_height=4,
                                      save_figure=save_figure)
@@ -267,7 +349,8 @@ class Utils:
         res_df.index = res_df['feature']
         res_df = pd.concat([res_df, in_group_data_sr, out_group_data_sr], axis=1)
         res_df.reset_index(inplace=True, drop=True)
-        res_df = res_df.sort_values('effect_size', ascending=False).sort_values('q-value', ascending=True)
+        res_df = res_df.sort_values('q-value', ascending=True).sort_values('effect_size')
+        res_df.reset_index(inplace=True, drop=True)
         if save_file != '':
             MyLib.save_csv(res_df, save_file)
         return res_df
@@ -454,16 +537,16 @@ class Utils:
         if plot_qqplot:
             MyVisualization.qqplot(res_df['p-value'], title=title)
         if plot_volcano:
-            MyVisualization.Volcano_plot(res_df, x_col=x_col, y_col='q-value', color_col=color_col, title=title,
-                                     x_label=xlabel, label_col='feature', down_df=down_df, up_df=up_df,
-                                     force_text=force_text, axis_label_fontsize=axis_label_fontsize,
-                                     down_color=down_color, up_color=up_color, cut_off_labels=cut_off_labels,
-                                     add_label=add_label, title_fontsize=title_fontsize,
-                                     xtick_step=xtick_step, ytick_step=ytick_step, xlim_left=xlim_left,
-                                     yspine_center=yspine_center, top_df=top_df, alpha_top=alpha_top,
-                                     force_points=force_points, add_arrow=add_arrow, xlim_right=xlim_right,
-                                     ylim_top=ylim_top, ylim_bottom=ylim_bottom,
-                                     figure_width=figure_width, figure_height=figure_height, save_figure=save_figure)
+            MyVisualization.Volcano_plot(res_df, y_col='q-value', x_col=x_col, color_col=color_col, title=title,
+                                         x_label=xlabel, label_col='feature', force_points=force_points,
+                                         force_text=force_text, xlim_right=xlim_right, xlim_left=xlim_left,
+                                         ylim_top=ylim_top, ylim_bottom=ylim_bottom, cut_off_labels=cut_off_labels,
+                                         up_color=up_color, down_color=down_color, down_df=down_df, up_df=up_df,
+                                         add_label=add_label, top_df=top_df, alpha_top=alpha_top, xtick_step=xtick_step,
+                                         ytick_step=ytick_step, yspine_center=yspine_center, add_arrow=add_arrow,
+                                         axis_label_fontsize=axis_label_fontsize, title_fontsize=title_fontsize,
+                                         figure_width=figure_width, figure_height=figure_height,
+                                         save_figure=save_figure)
         if return_sig:
             return (down_df, up_df)
         return res_df
@@ -472,11 +555,11 @@ class Utils:
     def compare_visualize_cat_features(df, x, y, color_dic, y_label, x_label='', title=' ', test='ttest',
                                        label_fontsize=8,
                                        tick_fontsize=7, ylim_top=None, ylim_bottom=None, ytick_step=None,
-                                       title_height=1., plot='swarmp',
-                                       title_fontsize=10, tick_rotation=0, label_newline=True, box_plot_fliers=False,
+                                       title_height=1., plot='swarmp', p_value = None,
+                                       title_fontsize=10, tick_rotation=0, label_newline=True,
                                        hline_type='mean', points_size=3, figure_width=3, figure_height=4, file_suffix='',
                                        save_figure=False):
-        p_value = None
+
         if test is not None:
             if test == 'ranksum':
                 stat, p_value = ranksums(df[df[x] == list(color_dic.keys())[0]][y],
@@ -505,7 +588,7 @@ class Utils:
                                         x_label=x_label,
                                         title=title, ylim_top=ylim_top, ylim_bottom=ylim_bottom, ytick_step=ytick_step,
                                         star_pval=True, labels_fontsize=label_fontsize,
-                                        title_height=title_height, alpha=1, showfliers=box_plot_fliers,
+                                        title_height=title_height, alpha=1,
                                         figure_width=figure_width, figure_height=figure_height, save_figure=save_figure)
 
     @staticmethod
@@ -566,17 +649,17 @@ class Utils:
         temp_df.loc[temp_df[y_col] == 'R3 & R4', y_col] = 'R4'
         temp_df.loc[temp_df[y_col] == 'R3', y_col] = 'WT'
         res1 = Utils.fisher_test(temp_df, x_col=y_col, y_col=x_col)
+        print('WT wrt R4, p-value:')
         print(res1)
         print('-------------------')
         temp_df = ssgsea_mut_df.copy()
         temp_df.loc[temp_df[y_col] == 'R3 & R4', y_col] = 'R3'
         temp_df.loc[temp_df[y_col] == 'R4', y_col] = 'WT'
         res2 = Utils.fisher_test(temp_df, x_col=y_col, y_col=x_col)
+        print('WT wrt R3, p-value:')
         print(res2)
         print('-------------------')
-        # if list(color_dic.keys())[0] == 'R4':
-        #     p_value = list(res1.values())[0]
-        # else:
+
         p_value = [list(res2.values())[0]]
         p_value.append(list(res1.values())[0])
         MyVisualization.percentage_stacked_barplot(ssgsea_mut_df, x_col=x_col, y_col=y_col, title=title,
@@ -643,120 +726,12 @@ class Utils:
                 if (volcano_axes_lim_dic is not None) and (cluster_id in volcano_axes_lim_dic):
                     ylim_top, ylim_bottom, xlim_right, xlim_left, y_step_size, x_step_size = volcano_axes_lim_dic[
                         cluster_id]
-                MyVisualization.Volcano_plot(res_df, x_col=logfc_col, y_col='adj.P.Val', title=title, force_text=force_text,
-                                             force_points=force_points, alpha_top=alpha_top, label_fontsize=7,
-                                             ylim_top=ylim_top, xlim_right=xlim_right, xlim_left=xlim_left,
-                                             ylim_bottom=ylim_bottom, xtick_step=x_step_size, ytick_step=y_step_size,
-                                             x_label='logFC', label_col='GeneName', down_df=down_df,  up_df=up_df,
-                                             cut_off_labels=cut_off_labels, filename_suffix='_DEP', save_figure=save_figure)
-
-    # @staticmethod
-    # def statistical_test_and_volcano_plot_v2(df1, df2, col=None, res_df=None, points_size=7, test='ttest', q_value=0.1,
-    #                                          points_labels_sr=None, add_label=True, selected_genes_dic=None,
-    #                                          size_scale=1, hline_sig_cutoff=None,
-    #                                          xtick_step=None, ytick_step=None, title=None, xlim_right=None,
-    #                                          ylim_top=None,
-    #                                          ylim_bottom=None, xlim_left=None, cut_off_labels=5, y_thr_qval=None,
-    #                                          x_thr_leq=None,
-    #                                          x_thr_geq=None, yspine_center=False, plot_qqplot=False, near_sig_qval=None,
-    #                                          down_regulated=True, up_regulated=True, force_points=2, force_text=1,
-    #                                          add_arrow=True,
-    #                                          xlabel='', sig_color_up='red', sig_color_down='blue',
-    #                                          near_sig_color_down='#47bcff',
-    #                                          near_sig_color_up='#f0871f', add_up_labels=True, add_down_labels=True,
-    #                                          add_legend=False, legend_title='', text_fontsize=7, legend_num=4,
-    #                                          xlabel_fontsize=10, ylabel_fontsize=10, return_res=False,
-    #                                          save_file='', save_figure=False):
-    #     color_col = 'color'
-    #     text_color_col = 'text_color'
-    #     label_col = 'label'
-    #     if test == 'ttest':
-    #         df1, df2 = Utils.match_columns_df(df1, df2)
-    #         res_df = Utils.apply_t_test(df1, df2, save_file=save_file)
-    #         x_col = 'effect_size'
-    #     elif test == 'correlation':
-    #         if res_df is None:
-    #             df1, df2 = Utils.match_rows_df(df1, df2)
-    #             if col is not None:
-    #                 res_df = Utils.apply_correlation_test_sr(df1[col], df2, save_file=save_file)
-    #             else:
-    #                 res_df = Utils.apply_correlation_paired_dfs(df1, df2, save_file=save_file)
-    #         x_col = 'corr'
-    #     else:
-    #         print('Warning: Select ttest or correlation!')
-    #         exit()
-    #
-    #     down_df, up_df = Utils.filter_statistical_results(res_df, x_col, q_val_thr=q_value,
-    #                                                       down_regulated=down_regulated, up_regulated=up_regulated)
-    #     res_df[color_col] = '#d4d4d4'
-    #     res_df[text_color_col] = np.nan
-    #     res_df[label_col] = np.nan
-    #     if near_sig_qval is not None:
-    #         ns_down_df, ns_up_df = Utils.filter_statistical_results(res_df, x_col, q_val_thr=near_sig_qval,
-    #                                                                 down_regulated=down_regulated,
-    #                                                                 up_regulated=up_regulated)
-    #         if ns_down_df is not None:
-    #             res_df.loc[ns_down_df.index, color_col] = near_sig_color_down
-    #         if ns_up_df is not None:
-    #             res_df.loc[ns_up_df.index, color_col] = near_sig_color_up
-    #
-    #     if down_df is not None:
-    #         res_df.loc[down_df.index, color_col] = sig_color_down
-    #         if add_down_labels:
-    #             res_df.loc[down_df.index[:cut_off_labels], label_col] = down_df.iloc[:cut_off_labels]['feature']
-    #             res_df.loc[down_df.index[:cut_off_labels], text_color_col] = 'k'
-    #
-    #     if up_df is not None:
-    #         res_df.loc[up_df.index, color_col] = sig_color_up
-    #         if add_up_labels:
-    #             res_df.loc[up_df.index[:cut_off_labels], label_col] = up_df.iloc[:cut_off_labels]['feature']
-    #             res_df.loc[up_df.index[:cut_off_labels], text_color_col] = 'k'
-    #
-    #     if y_thr_qval is not None:
-    #         res_df = res_df[res_df['q-value'] < y_thr_qval]
-    #     if x_thr_leq is not None:
-    #         res_df = res_df[res_df[x_col] <= x_thr_leq]
-    #     elif x_thr_geq is not None:
-    #         res_df = res_df[res_df[x_col] >= x_thr_geq]
-    #
-    #     if not isinstance(points_size, int):
-    #         points_size = points_size.astype(float)
-    #         # points_size += 0.01
-    #         # points_size *= 100
-    #         points_size = points_size[res_df.index]
-    #         print(points_size)
-    #
-    #     if points_labels_sr is not None:
-    #         points_labels_sr = points_labels_sr[res_df.index]
-    #     elif add_label:
-    #         points_labels_sr = pd.Series(res_df.index.tolist(), index=res_df.index)
-    #
-    #     if selected_genes_dic is not None:
-    #         temp_df = res_df[res_df['feature'].isin(selected_genes_dic.keys())]
-    #         if temp_df.shape[0] < len(selected_genes_dic):
-    #             print('Warning: selected genes are not present!')
-    #             exit()
-    #         res_df.loc[temp_df.index, color_col] = list(selected_genes_dic.values())
-    #         res_df.loc[temp_df.index, text_color_col] = list(selected_genes_dic.values())
-    #         res_df.loc[temp_df.index, label_col] = list(selected_genes_dic.keys())
-    #
-    #     if plot_qqplot:
-    #         MyVisualization.qqplot(res_df['p-value'], title=title)
-    #     MyVisualization.Volcano_plot_v2(res_df, x_col=x_col, y_col='q-value', color_col=color_col,
-    #                                     legend_num=legend_num, hline_sig_cutoff=hline_sig_cutoff,
-    #                                     text_color_col=text_color_col, add_label=add_label, points_size=points_size,
-    #                                     points_labels_sr=points_labels_sr, add_legend=add_legend,
-    #                                     legend_title=legend_title,
-    #                                     title=title, x_label=xlabel, force_text=force_text, yspine_center=yspine_center,
-    #                                     xtick_step=xtick_step, ytick_step=ytick_step, xlim_left=xlim_left,
-    #                                     alpha_points=.7,
-    #                                     text_fontsize=text_fontsize, xlabel_fontsize=xlabel_fontsize,
-    #                                     ylabel_fontsize=ylabel_fontsize,
-    #                                     force_points=force_points, add_arrow=add_arrow, xlim_right=xlim_right,
-    #                                     size_scale=size_scale,
-    #                                     ylim_top=ylim_top, ylim_bottom=ylim_bottom, save_figure=save_figure)
-    #     if return_res:
-    #         return (res_df)
+                MyVisualization.Volcano_plot(res_df, y_col='adj.P.Val', x_col=logfc_col, title=title, x_label='logFC',
+                                             label_col='GeneName', force_points=force_points, force_text=force_text,
+                                             xlim_right=xlim_right, xlim_left=xlim_left, ylim_top=ylim_top,
+                                             ylim_bottom=ylim_bottom, cut_off_labels=cut_off_labels, down_df=down_df,
+                                             up_df=up_df, label_fontsize=7, alpha_top=alpha_top, xtick_step=x_step_size,
+                                             ytick_step=y_step_size, save_figure=save_figure, filename_suffix='_DEP')
 
     @staticmethod
     def statistical_test_and_volcano_plot_v2(df1, df2, col=None, res_df=None, points_size=7, test='ttest', q_value=0.1,
@@ -866,7 +841,8 @@ class Utils:
                                         size_scale=size_scale,
                                         ylim_top=ylim_top, ylim_bottom=ylim_bottom, save_figure=save_figure)
         if return_res:
-            return (res_df)
+            res_df = res_df.sort_values(x_col, ascending=False).sort_values('q-value', ascending=True)
+            return res_df
 
     @staticmethod
     def visualize_de_genes(res_df, in_group, out_group='Rest', pval_col='P.Value', fdr_col='adj.P.Val', q_val_thr=0.1,
@@ -899,13 +875,13 @@ class Utils:
             # MyVisualization.qqplot(res_df[pval_col].tolist(), title=title, ylim_top=2)
             MyVisualization.qqplot(res_df[pval_col].tolist(), title=title)
         if up_dim > 0 or down_dim > 0:
-            MyVisualization.Volcano_plot(res_df, x_col='logFC', y_col=fdr_col, title=title, y_hline=y_hline,
-                                         x_label='logFC', label_col='Gene', down_df=down_df, force_text=force_text,
-                                         force_points=force_points, cut_off_labels_down=cut_off_labels_down,
-                                         up_df=up_df, cut_off_labels=cut_off_labels, label_fontsize=6, point_size=15,
-                                         ylim_top=ylim_top, ylim_bottom=ylim_bottom, xlim_right=xlim_right, xlim_left=xlim_left,
-                                         ytick_step=ytick_step, xtick_step=xtick_step,
-                                         save_figure=save_figure)
+            MyVisualization.Volcano_plot(res_df, y_col=fdr_col, x_col='logFC', title=title, x_label='logFC',
+                                         label_col='Gene', force_points=force_points, force_text=force_text,
+                                         xlim_right=xlim_right, xlim_left=xlim_left, ylim_top=ylim_top,
+                                         ylim_bottom=ylim_bottom, cut_off_labels=cut_off_labels,
+                                         cut_off_labels_down=cut_off_labels_down, down_df=down_df, up_df=up_df,
+                                         label_fontsize=6, xtick_step=xtick_step, ytick_step=ytick_step,
+                                         y_hline=y_hline, point_size=15, save_figure=save_figure)
         contrast = f'{in_group}_{out_group}'
         if up_dim > 0:
             up_df.set_index('Gene', inplace=True, drop=True)
@@ -972,7 +948,7 @@ class Utils:
                                          filename_suffix=filename, save_figure=True)
             cbar_colors = ['white', "#d94801", "#a63603"]
             cabr_intervals = [0, 1, 1.5, 7]
-            MyVisualization.plot_heatmap(fdr_log, row_label=row_label, col_label=col_label, cbar_title='-Log10 Adj P',
+            MyVisualization.plot_heatmap(fdr_log, row_label=row_label, col_label=col_label, cbar_title='-Log10 q',
                                          xtick_fontsize=8, ytick_fontsize=8, title=title, cbar_left_adjust=-.09,
                                          cbar_pval=True, title_fontsize=9, figsize_w=figure_width, figsize_h=figure_height,
                                          filename_suffix=filename, save_figure=True)

@@ -1,0 +1,2 @@
+feature,p-value,effect_size,q-value,in_group_gene_effect_mean,out_group_gene_effect_mean
+TP63,2.8921240937447866e-06,-2.639238601034889,0.001206015747091576,-0.7426406883622967,-0.07155339792985288

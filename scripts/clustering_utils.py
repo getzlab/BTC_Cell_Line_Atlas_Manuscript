@@ -126,13 +126,17 @@ class Clustering:
                                      cbar_title=f"Gene effect", bar_colors_ratio=0.05, cbar_left_adjust=0.015,
                                      left_adjust=0.07, legend_top_offset=0.7, figsize_w=7, figsize_h=4,
                                      save_figure=save_figure)
+    @staticmethod
+    def normalize_corr_matrix(corr_df):
+        corr_matrix_df = corr_df.copy()
+        corr_matrix_df[corr_matrix_df < 0] = 0
+        return corr_matrix_df
 
     @staticmethod
     def louvain_clustering_ensemble(df, ite=100, gammas=None):
         if gammas is None:
             gammas = [1.5]
-        nonegative_df = df.copy()
-        nonegative_df[df < 0] = 0
+        nonegative_df = Clustering.normalize_corr_matrix(df)
         labels_np = np.column_stack([bct.community_louvain(nonegative_df.values, gamma=g, seed=seed + n)[0]
                                      for n in range(ite) for g in gammas])
         total_ite = len(gammas) * ite
@@ -191,13 +195,13 @@ class Clustering:
     def plot_consensus_heatmaps(data_df, corr_df, upset_df, labels_np, consensus_ite, plot_corr=False, up=True,
                                 ttest=False, q_val_thr=0.1,
                                 feature_cutoff=np.inf, row_cluster=False, row_label='Gene', reverse=False,
-                                clusters_type_filename='',
-                                clusters_reordering=None, cluster_prefix='C', yticklabels=True, ytick_fontsize=9,
-                                xtick_fontsize=9,
+                                clusters_type_filename='', add_mean_cols=False,
+                                clusters_reordering=None, cluster_prefix='C', xticklabels=True, yticklabels=True,
+                                ytick_fontsize=9, xtick_fontsize=9,
                                 bar_colors_ratio=0.01, legend_fontsize=9, event_legend=True, event_color=None,
                                 cbar_title='                 ',
-                                borders_linewidths=0.01, legend_h_offset=0.06, cbar_discrete=False,
-                                plot_volcano=False, consensus_ticklabels=True,
+                                borders_linewidths=0.01, legend_h_offset=0.06, filter=False, cbar_discrete=False,
+                                plot_volcano=False,
                                 volcano_axes_lim_dic=None, gene_effect_thr=None, cut_off_labels_top=10,
                                 left_adjust=0.1, legend_top_offset=0.85, cbar_left_adjust=0.06, legend_diff_offset=0.11,
                                 volcano_force_points=0.6, volcano_force_text=0.4, top_features=True, plot_qqplot=False,
@@ -205,7 +209,7 @@ class Clustering:
                                 figsize_h=12,
                                 save_figure=False):
         """
-            This method manages the output of clustering algorithms that produce varying labels for the same input across
+         This method manages the output of clustering algorithms that produce varying labels for the same input across
          different runs. It then plots these results based on consensus scores and the top features.
             input labels_np: each column correspond to labels of one run.
         """
@@ -224,13 +228,13 @@ class Clustering:
         data_df = data_df.reindex(reordered_upset_df.index)
         features = Clustering.identify_significant_features(data_df, reordered_upset_df, up_regulated=up, ttest=ttest,
                                                             feature_cutoff=feature_cutoff, q_val_thr=q_val_thr,
-                                                            plot_qqplot=plot_qqplot,
+                                                            plot_qqplot=plot_qqplot, add_mean_cols=add_mean_cols,
                                                             volcano_axes_lim_dic=volcano_axes_lim_dic,
                                                             gene_effect_thr=gene_effect_thr,
                                                             cut_off_labels_top=cut_off_labels_top,
                                                             plot_volcano=plot_volcano,
                                                             force_points=volcano_force_points,
-                                                            force_text=volcano_force_text,
+                                                            force_text=volcano_force_text, filter=filter,
                                                             save_figure=save_figure)
 
         data_filtered_df = data_df.loc[:, features]
@@ -255,7 +259,7 @@ class Clustering:
                                      legend_top_offset=legend_top_offset, left_adjust=left_adjust,
                                      ytick_fontsize=ytick_fontsize, xtick_fontsize=ytick_fontsize,
                                      cbar_left_adjust=cbar_left_adjust, legend_diff_offset=legend_diff_offset,
-                                     legend_h_offset=legend_h_offset, yticklabels=consensus_ticklabels, xticklabels=consensus_ticklabels,
+                                     legend_h_offset=legend_h_offset,
                                      figsize_w=figsize_w, figsize_h=figsize_h, save_figure=save_figure)
 
         if plot_corr:
@@ -274,7 +278,7 @@ class Clustering:
             data_filtered_df = data_filtered_df.loc[sample_ids, features]
             MyVisualization.plot_heatmap(data_filtered_df.T, reordered_upset_df, col_label='Cell Line',
                                          row_label=row_label,
-                                         row_cluster=row_cluster, yticklabels=yticklabels,
+                                         row_cluster=row_cluster, xticklabels=xticklabels, yticklabels=yticklabels,
                                          ytick_fontsize=ytick_fontsize,
                                          xtick_fontsize=xtick_fontsize, cbar_discrete=cbar_discrete,
                                          event_legend=event_legend, event_color=event_color,
@@ -301,15 +305,39 @@ class Clustering:
     @staticmethod
     def identify_significant_features(data_df, upset_df, cluster_column='Cluster', ttest=False, up_regulated=True,
                                       feature_cutoff=np.inf, q_val_thr=0.1, plot_volcano=True, plot_qqplot=True,
+                                      filter=False, add_mean_cols=False,
                                       force_points=0.6, force_text=0.4, cut_off_labels_top=10,
                                       volcano_axes_lim_dic=None,
-                                      gene_effect_thr=None, filename_prefix='',
-                                      save_figure=None):
+                                      gene_effect_thr=None, exclusion_ids=None, add_non_hits_labels=False, title='',
+                                      save_figure=None, filename_prefix=''):
+        """
 
+        :param data_df:
+        :param upset_df:
+        :param cluster_column:
+        :param ttest:
+        :param up_regulated:
+        :param feature_cutoff: cut off for the number of sig features
+        :param q_val_thr:
+        :param plot_volcano:
+        :param plot_qqplot:
+        :param filter:
+        :param force_points:
+        :param force_text:
+        :param cut_off_labels_top: cut off for the number of labels of sig features
+        :param volcano_axes_lim_dic:
+        :param gene_effect_thr:
+        :param exclusion_ids:
+        :param save_figure:
+        :return:
+        """
         p_val_thr = 0.05
-        cluster_ids = upset_df[cluster_column].unique()
+        cluster_ids = upset_df[cluster_column].unique().tolist()
+        if exclusion_ids is not None:
+            for id in exclusion_ids:
+                cluster_ids.remove(id)
         features_l = []
-        top_df = None
+        top_df = None  # For gene effect, add label for those not meeting the 2x dependency condition
         for cluster_id in cluster_ids:
             cluster_data = data_df[upset_df[cluster_column] == cluster_id]
             other_clusters_data = data_df[upset_df[cluster_column] != cluster_id]
@@ -330,6 +358,18 @@ class Clustering:
                 res_df = pd.DataFrame(p_values, columns=['feature', 'p-value', 'effect_size'])
                 # MyVisualization.plot_distribution(res_df['p-value'])
                 res_df['q-value'] = fdrcorrection(res_df['p-value'].values)[1]
+
+                if add_mean_cols:
+                    in_group_data_sr = cluster_data.mean()
+                    in_group_data_sr.name = 'in_group_gene_effect_mean'
+
+                    out_group_data_sr = other_clusters_data.mean()
+                    out_group_data_sr.name = 'out_group_gene_effect_mean'
+
+                    res_df.index = res_df['feature']
+                    res_df = pd.concat([res_df, in_group_data_sr, out_group_data_sr], axis=1)
+                    res_df.reset_index(inplace=True, drop=True)
+
                 res_filtered_df = res_df[res_df.apply(lambda x: (x['p-value'] < p_val_thr and
                                                                  x['q-value'] < q_val_thr), axis=1)]
                 if plot_qqplot:
@@ -358,13 +398,14 @@ class Clustering:
                         cur_feature_cut_off = min(down_df.shape[0], feature_cutoff)
                         down_df = down_df.iloc[:cur_feature_cut_off, ]
                         cur_cut_off_labels = min(cut_off_labels_top, down_df.shape[0])
+                        temp_df = down_df.copy()
                         if gene_effect_thr is not None:
                             dependent_genes = cluster_data.columns[(cluster_data < gene_effect_thr).sum() >= 2].tolist()
                             # group_data_df = cluster_data.mean()
                             # group_data_df = group_data_df[group_data_df < gene_effect_thr]
-                            top_df = down_df[~down_df['feature'].isin(dependent_genes)].head(cur_cut_off_labels)
+                            if add_non_hits_labels:
+                                top_df = down_df[~down_df['feature'].isin(dependent_genes)].head(cur_cut_off_labels)
                             down_df = down_df[down_df['feature'].isin(dependent_genes)]
-                        temp_df = down_df.copy()
 
                     if (not up_regulated and down_df.shape[0] > 0) or (up_regulated and up_df.shape[0] > 0):
                         if plot_volcano:
@@ -373,18 +414,25 @@ class Clustering:
                                 ylim_top, ylim_bottom, xlim_right, xlim_left, y_step_size, x_step_size = \
                                 volcano_axes_lim_dic[cluster_id]
 
-                            MyVisualization.Volcano_plot(res_df, x_col='effect_size', y_col='q-value', title=cluster_id,
-                                                         ylim_top=ylim_top, xlim_right=xlim_right, xlim_left=xlim_left,
-                                                         ylim_bottom=ylim_bottom, xtick_step=x_step_size,
-                                                         ytick_step=y_step_size,
-                                                         x_label='Effect size', label_col='feature', down_df=down_df,
-                                                         up_df=up_df,
-                                                         cut_off_labels=cur_feature_cut_off, force_points=force_points,
-                                                         top_df=top_df,
-                                                         force_text=force_text, save_figure=save_figure)
+                            MyVisualization.Volcano_plot(res_df, y_col='q-value', x_col='effect_size',
+                                                         title=cluster_id + title, x_label='Effect size',
+                                                         label_col='feature', force_points=force_points,
+                                                         force_text=force_text, xlim_right=xlim_right,
+                                                         xlim_left=xlim_left, ylim_top=ylim_top,
+                                                         ylim_bottom=ylim_bottom, cut_off_labels=cur_cut_off_labels,
+                                                         down_df=down_df, up_df=up_df, top_df=top_df,
+                                                         xtick_step=x_step_size, ytick_step=y_step_size,
+                                                         save_figure=save_figure)
                         temp_df.set_index('feature', inplace=True, drop=True)
-
-                        features_l += [f for f in temp_df.index.tolist() if f not in features_l]
+                        if filter:  # For visualization purpose only select genes that are dependencies in at least two cell lines
+                            count_less_than_minus_0_5 = (cluster_data[temp_df.index.tolist()] < -0.5).sum()
+                            data_filtered_df = cluster_data[temp_df.index.tolist()].loc[:,
+                                               count_less_than_minus_0_5 >= 2]
+                            hits_l = [f for f in data_filtered_df.columns if f not in features_l]
+                            features_l += hits_l
+                            MyLib.save_csv(temp_df.loc[hits_l], f'{filename_prefix}{cluster_id}_features_{regulated}_dep_hits.csv')
+                        else:
+                            features_l += [f for f in temp_df.index.tolist() if f not in features_l]
                         MyLib.save_csv(temp_df, f'{filename_prefix}{cluster_id}_features_{regulated}.csv')
         return features_l
 
@@ -442,12 +490,17 @@ class Clustering:
         Clustering.init_seed(seed)
         permuted_clusters_l = Clustering.permute_clusters_labels(clusters_df, permutation_count=5000)
         p_vals_df = pd.DataFrame(index=feat_df.columns, columns=clusters_df.columns)
+        paired_df = pd.DataFrame(np.nan, index=feat_df.columns, columns=clusters_df.columns)
         ari_df = pd.DataFrame(index=feat_df.columns, columns=clusters_df.columns, dtype=np.float64)
         for c in clusters_df:
             print(c)
             for f in feat_df.columns:
                 ari = adjusted_rand_score(feat_df[f], clusters_df[c])  # Adjusted Rand Index
                 ari_df.loc[f, c] = ari
+                coverage_frac_complement = sum(feat_df[f] & (1-clusters_df[c])) / sum(1-clusters_df[c])
+                coverage_frac = sum(feat_df[f] & clusters_df[c]) / sum(clusters_df[c])
+                if coverage_frac_complement <= coverage_frac:
+                    paired_df.loc[f, c] = 'paired'
                 p_val = Clustering.permutation_test_adjusted_rand_score(cluster_id=c, feat_sr=feat_df[f],
                                                                         permuted_clusters_l=permuted_clusters_l,
                                                                         observed_score=ari)
@@ -460,10 +513,14 @@ class Clustering:
         else:
             q_vals_df = Clustering.calc_q_values(p_vals_df)
 
-        empty_row = pd.DataFrame(columns=p_vals_df.columns, index=[''])
-        stats_df = pd.concat([p_vals_df,empty_row, q_vals_df], axis=0)
+        empty_row1 = pd.DataFrame(columns=p_vals_df.columns, index=['p-value'])
+        empty_row2 = pd.DataFrame(columns=p_vals_df.columns, index=['q-value'])
+        empty_row3 = pd.DataFrame(columns=p_vals_df.columns, index=['ARI score'])
+        empty_row4 = pd.DataFrame(columns=p_vals_df.columns, index=['Cluster Matching'])
+        stats_df = pd.concat([empty_row1, p_vals_df,empty_row2, q_vals_df], axis=0)
+        ari_comp_df = pd.concat([empty_row3, ari_df, empty_row4, paired_df], axis=0)
         MyLib.save_csv(stats_df, f'adjusted_rand_index_stats_{filename}.csv')
-        MyLib.save_csv(ari_df, f'adjusted_rand_scores_{title}{filename}.csv')
+        MyLib.save_csv(ari_comp_df, f'adjusted_rand_scores_{title}{filename}.csv')
 
         MyVisualization.plot_heatmap(ari_df, None,
                                      col_label=col_label, title=title,
@@ -620,3 +677,6 @@ class Clustering:
                                      cbar_left_adjust=cbar_left_adjust, legend_diff_offset=legend_diff_offset,
                                      legend_h_offset=legend_h_offset,
                                      figsize_w=figsize_w, figsize_h=figsize_h, save_figure=save_figure)
+
+#========
+Clustering.init_seed(seed)

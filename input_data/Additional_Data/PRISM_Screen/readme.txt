@@ -1,0 +1,7 @@
+download PRISM datasets
+
+Repurposing_Public_23Q2_Extended_Primary_Compound_List.csv
+Repurposing_Public_23Q2_Extended_Primary_Data_Matrix.csv
+
+From:
+https://figshare.com/articles/dataset/Repurposing_Public_23Q2/23600310/3
