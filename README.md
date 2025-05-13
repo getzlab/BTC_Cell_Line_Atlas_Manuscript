@@ -1,7 +1,7 @@
 # BTC Cell Line Atlas
 
 This repository contains the code used to generate the analyses and figures presented in:  
-**"Generation of a biliary tract cancer cell line atlas identifies molecular subtypes and therapeutic targets"** (Vijay, Karisani, et al. 2025)
+**"Generation of a biliary tract cancer cell line atlas identifies molecular subtypes and therapeutic targets"**, Vijay, V., and Karisani, N., et al. [Cancer Discovery](https://doi.org/10.1158/2159-8290.CD-24-1383), 2025.
 
 
 ## 📦 Data Availability
@@ -22,12 +22,12 @@ analysis whose plots are in multiple figures in the manuscript.
 Each directory contains the necessary code to generate the plots for that figure or analysis.
 which are then saved in a local`output_X/` subdirectory within the same folder.
 
-The required input files are loaded either from the`input_data/` directory, the current`output_X/` directory,
-or the`output_X/` directories of previous figures.
+Set the `working_dir` variable to `your-path/BTC_Cell_Line_Atlas_Manuscript`. The required input files will be loaded either from the`input_data/`, the local`output_X/`,
+or the`output_X/` directories of previous figures or analyses.
 
 ## 🛠 Requirements
 
-- For information regarding R packages, please refer to the .html files located in the `Figure1/ouput_fig1/` directory.
+- For information regarding R packages, please refer to the .html files located in the `Figure1/output_fig1/` directory.
 - The Python code was developed and tested using Python version 3.10.6 in PyCharm IDE (Professional Edition).
 - Required packages listed in `requirements.txt`
 
